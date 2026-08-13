@@ -1,0 +1,122 @@
+<!doctype html>
+<html lang="en" data-theme="{{ data.theme }}">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>{{ data.title }}</title>
+    {% if data.favicon_filename %}
+      <link rel="icon" href="./{{ data.favicon_filename }}" />
+    {% endif %}
+    <style>
+      :root {
+        --bg-color: #ffffff;
+        --text-color: #0f172a;
+        --subtext-color: #475569;
+      }
+
+      /* Explicit Theme Definitions */
+      html[data-theme="light"] {
+        --bg-color: #ffffff;
+        --text-color: #0f172a;
+        --subtext-color: #475569;
+      }
+      html[data-theme="gray"] {
+        --bg-color: #f8fafc;
+        --text-color: #0f172a;
+        --subtext-color: #475569;
+      }
+      html[data-theme="dark"] {
+        --bg-color: #0f172a;
+        --text-color: #f8fafc;
+        --subtext-color: #94a3b8;
+      }
+
+      /* Automatic OS / Browser Dark Mode Handling */
+      @media (prefers-color-scheme: dark) {
+        html[data-theme="auto"] {
+          --bg-color: #0f172a;
+          --text-color: #f8fafc;
+          --subtext-color: #94a3b8;
+        }
+      }
+      @media (prefers-color-scheme: light) {
+        html[data-theme="auto"] {
+          --bg-color: #ffffff;
+          --text-color: #0f172a;
+          --subtext-color: #475569;
+        }
+      }
+
+      body {
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+        background-color: var(--bg-color);
+        color: var(--text-color);
+        margin: 0;
+        padding: 40px 20px;
+        display: flex;
+        justify-content: center;
+      }
+      .container {
+        width: 100%;
+        max-width: 480px;
+        text-align: center;
+      }
+      .logo {
+        max-width: 120px;
+        max-height: 120px;
+        border-radius: 50%;
+        object-fit: cover;
+        margin-bottom: 16px;
+      }
+      h1 {
+        font-size: 1.5rem;
+        margin: 0 0 8px 0;
+      }
+      p.bio {
+        color: var(--subtext-color);
+        font-size: 0.95rem;
+        margin: 0 0 24px 0;
+        white-space: pre-wrap;
+      }
+      .btn {
+        display: block;
+        width: 100%;
+        padding: 14px 20px;
+        margin-bottom: 12px;
+        color: #ffffff;
+        text-decoration: none;
+        border-radius: 8px;
+        font-weight: 600;
+        box-sizing: border-box;
+        transition: opacity 0.15s ease;
+      }
+      .btn:hover {
+        opacity: 0.9;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      {% if data.org_logo_filename %}
+        <img src="./{{ data.org_logo_filename }}" alt="Logo" class="logo" />
+      {% endif %}
+
+      <h1>{{ data.title }}</h1>
+      {% if data.bio %}<p class="bio">{{ data.bio }}</p>{% endif %}
+
+      <div class="buttons">
+        {% for btn in data.buttons %}
+          <a
+            href="{{ btn.target_url }}"
+            class="btn"
+            style="background-color: {{ btn.color }};"
+            target="{{ '_blank' if btn.type == 'link' else '_self' }}"
+            rel="{{ 'noopener noreferrer' if btn.type == 'link' else '' }}"
+          >
+            {{ btn.label }}
+          </a>
+        {% endfor %}
+      </div>
+    </div>
+  </body>
+</html>

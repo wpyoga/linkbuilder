@@ -27,7 +27,7 @@ app.config.update(
     SESSION_COOKIE_SECURE=COOKIE_SECURE,
     SESSION_COOKIE_HTTPONLY=True,
     SESSION_COOKIE_SAMESITE="Lax",
-    MAX_CONTENT_LENGTH=16 * 1024 * 1024,
+    MAX_CONTENT_LENGTH=16 * 1024 * 1024,  # 16MB file upload limit
 )
 
 DB_PATH = os.environ.get("DB_PATH", "app.db")
@@ -147,6 +147,7 @@ def init_db():
         cursor.execute(
             "INSERT INTO site_config (key, value) VALUES ('bio', 'Software Solutions')"
         )
+        cursor.execute("INSERT INTO site_config (key, value) VALUES ('theme', 'auto')")
 
         cursor.execute(
             "INSERT INTO buttons (type, position, color) VALUES ('vcard', 1, '#0066cc')"
@@ -181,6 +182,10 @@ def init_db():
         """,
             (l_id, "Official Website", "https://example.com"),
         )
+
+    cursor.execute("SELECT COUNT(*) FROM site_config WHERE key = 'theme'")
+    if not cursor.fetchone():
+        cursor.execute("INSERT INTO site_config (key, value) VALUES ('theme', 'auto')")
 
     conn.commit()
     conn.close()
@@ -249,6 +254,7 @@ def get_site_data():
     return {
         "title": config.get("title", ""),
         "bio": config.get("bio", ""),
+        "theme": config.get("theme", "auto"),
         "has_favicon": has_favicon,
         "has_org_logo": has_org_logo,
         "favicon_filename": config.get("favicon_filename", "favicon.ico"),
@@ -290,9 +296,10 @@ def generate_vcard_content(vcard):
 
 
 def bake_static_site():
+    os.makedirs(OUTPUT_DIR, exist_ok=True)
     conn = get_db_connection()
 
-    # 1. Export Image BLOBs to Public Directory
+    # 1. Export Image BLOBs to Output Directory
     favicon_row = conn.execute(
         "SELECT value, blob_value FROM site_config WHERE key = 'favicon_blob'"
     ).fetchone()
@@ -362,6 +369,7 @@ def bake_static_site():
     render_context = {
         "title": data["title"],
         "bio": data["bio"],
+        "theme": data.get("theme", "auto"),
         "favicon_filename": (
             favicon_filename if favicon_row and favicon_row["blob_value"] else None
         ),
@@ -369,7 +377,7 @@ def bake_static_site():
         "buttons": processed_buttons,
     }
 
-    rendered_html = render_template("site_template.html", data=render_context)
+    rendered_html = render_template("site_template.jinja2", data=render_context)
     index_path = os.path.join(OUTPUT_DIR, "index.html")
     with open(index_path, "w", encoding="utf-8") as f:
         f.write(rendered_html)
@@ -402,7 +410,7 @@ def login():
 
         flash("Invalid username or password.", "danger")
 
-    return render_template("login.html")
+    return render_template("login.jinja2")
 
 
 @app.route("/logout")
@@ -417,7 +425,7 @@ def logout():
 @login_required
 def admin():
     data = get_site_data()
-    return render_template("admin.html", data=data, user=current_user)
+    return render_template("admin.jinja2", data=data, user=current_user)
 
 
 @app.route("/save", methods=["POST"])
@@ -425,6 +433,7 @@ def admin():
 def save():
     title = request.form.get("title", "")
     bio = request.form.get("bio", "")
+    theme = request.form.get("theme", "auto")
 
     types = request.form.getlist("btn_type")
     colors = request.form.getlist("btn_color")
@@ -484,11 +493,16 @@ def save():
             )
             v_idx += 1
 
-    posted_state = {"title": title, "bio": bio, "buttons": parsed_buttons}
+    posted_state = {
+        "title": title,
+        "bio": bio,
+        "theme": theme,
+        "buttons": parsed_buttons,
+    }
 
     if len(sanitized_slugs) != len(set(sanitized_slugs)):
         flash("Error: Duplicate vCard slugs detected.", "danger")
-        return render_template("admin.html", data=posted_state, user=current_user), 400
+        return render_template("admin.jinja2", data=posted_state, user=current_user), 400
 
     conn = get_db_connection()
     cursor = conn.cursor()
@@ -501,6 +515,10 @@ def save():
         )
         cursor.execute(
             "INSERT OR REPLACE INTO site_config (key, value) VALUES ('bio', ?)", (bio,)
+        )
+        cursor.execute(
+            "INSERT OR REPLACE INTO site_config (key, value) VALUES ('theme', ?)",
+            (theme,),
         )
 
         # Process Favicon Upload as BLOB
@@ -571,7 +589,7 @@ def save():
         conn.rollback()
         conn.close()
         flash(f"Database error during save: {str(e)}", "danger")
-        return render_template("admin.html", data=posted_state, user=current_user), 500
+        return render_template("admin.jinja2", data=posted_state, user=current_user), 500
 
     conn.close()
 
