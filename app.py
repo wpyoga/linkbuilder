@@ -1,44 +1,165 @@
 import os
-import json
+import sqlite3
 from flask import Flask, render_template, request, redirect, url_for, flash
+from flask_login import (
+    LoginManager,
+    UserMixin,
+    login_user,
+    logout_user,
+    login_required,
+    current_user,
+)
+from werkzeug.security import generate_password_hash, check_password_hash
 
 app = Flask(__name__)
-app.secret_key = "change-this-to-a-secure-random-key"
+app.secret_key = os.environ.get(
+    "FLASK_SECRET_KEY", "change-this-in-production-to-a-random-secret"
+)
 
-DATA_FILE = "data.json"
-# Target output directory served by Caddy
+DB_PATH = "app.db"
 OUTPUT_DIR = "/srv/www/example.com/@info"
 
+# Initial superadmin deployment credentials
+DEPLOYMENT_SUPERADMIN_USER = "admin"
+# Change this password before initial run or override via env var
+DEPLOYMENT_SUPERADMIN_PASS = os.environ.get(
+    "SUPERADMIN_PASSWORD", "SuperSecretPass123!"
+)
 
-def load_data():
-    if os.path.exists(DATA_FILE):
-        with open(DATA_FILE, "r") as f:
-            return json.load(f)
+# --- Flask-Login Setup ---
+login_manager = LoginManager()
+login_manager.init_app(app)
+login_manager.login_view = "login"
+
+
+class User(UserMixin):
+    def __init__(self, id, username, password_hash):
+        self.id = id
+        self.username = username
+        self.password_hash = password_hash
+
+
+@login_manager.user_loader
+def load_user(user_id):
+    conn = get_db_connection()
+    user_row = conn.execute(
+        "SELECT id, username, password_hash FROM users WHERE id = ?", (user_id,)
+    ).fetchone()
+    conn.close()
+    if user_row:
+        return User(
+            id=user_row["id"],
+            username=user_row["username"],
+            password_hash=user_row["password_hash"],
+        )
+    return None
+
+
+# --- Database Initialization & Helpers ---
+def get_db_connection():
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    return conn
+
+
+def init_db():
+    conn = get_db_connection()
+    cursor = conn.cursor()
+
+    # Users table
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS users (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            username TEXT UNIQUE NOT NULL,
+            password_hash TEXT NOT NULL
+        )
+    """)
+
+    # Site configuration key-value table
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS site_config (
+            key TEXT PRIMARY KEY,
+            value TEXT
+        )
+    """)
+
+    # Dynamic links table
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS links (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            label TEXT NOT NULL,
+            url TEXT NOT NULL,
+            position INTEGER DEFAULT 0
+        )
+    """)
+
+    # Seed default superadmin if no users exist
+    cursor.execute("SELECT COUNT(*) FROM users")
+    if cursor.fetchone()[0] == 0:
+        hashed_pw = generate_password_hash(DEPLOYMENT_SUPERADMIN_PASS, method="scrypt")
+        cursor.execute(
+            "INSERT INTO users (username, password_hash) VALUES (?, ?)",
+            (DEPLOYMENT_SUPERADMIN_USER, hashed_pw),
+        )
+        print(f"[INIT] Superadmin created. Username: '{DEPLOYMENT_SUPERADMIN_USER}'")
+
+    # Seed default site config if empty
+    cursor.execute("SELECT COUNT(*) FROM site_config")
+    if cursor.fetchone()[0] == 0:
+        default_config = {
+            "title": "Example Company",
+            "bio": "Software Solutions",
+            "vcard_fn": "John Doe",
+            "vcard_org": "Example Inc.",
+            "vcard_title": "Systems Engineer",
+            "vcard_email": "john@example.com",
+            "vcard_phone": "+1234567890",
+            "vcard_url": "https://example.com",
+        }
+        for k, v in default_config.items():
+            cursor.execute("INSERT INTO site_config (key, value) VALUES (?, ?)", (k, v))
+
+        cursor.execute(
+            "INSERT INTO links (label, url, position) VALUES (?, ?, ?)",
+            ("Official Website", "https://example.com", 1),
+        )
+        cursor.execute(
+            "INSERT INTO links (label, url, position) VALUES (?, ?, ?)",
+            ("Documentation", "https://docs.example.com", 2),
+        )
+
+    conn.commit()
+    conn.close()
+
+
+def get_site_data():
+    conn = get_db_connection()
+    config_rows = conn.execute("SELECT key, value FROM site_config").fetchall()
+    config = {row["key"]: row["value"] for row in config_rows}
+
+    links_rows = conn.execute(
+        "SELECT label, url FROM links ORDER BY position ASC, id ASC"
+    ).fetchall()
+    links = [{"label": row["label"], "url": row["url"]} for row in links_rows]
+    conn.close()
+
     return {
-        "title": "Example Company",
-        "bio": "Software Solutions",
+        "title": config.get("title", ""),
+        "bio": config.get("bio", ""),
         "vcard": {
-            "fn": "John Doe",
-            "org": "Example Inc.",
-            "title": "Systems Engineer",
-            "email": "john@example.com",
-            "phone": "+1234567890",
-            "url": "https://example.com",
+            "fn": config.get("vcard_fn", ""),
+            "org": config.get("vcard_org", ""),
+            "title": config.get("vcard_title", ""),
+            "email": config.get("vcard_email", ""),
+            "phone": config.get("vcard_phone", ""),
+            "url": config.get("vcard_url", ""),
         },
-        "links": [
-            {"label": "Official Website", "url": "https://example.com"},
-            {"label": "Documentation", "url": "https://docs.example.com"},
-        ],
+        "links": links,
     }
 
 
-def save_data(data):
-    with open(DATA_FILE, "w") as f:
-        json.dump(data, f, indent=2)
-
-
+# --- Static Compiler (Write-Only output) ---
 def generate_vcard_content(vcard):
-    """Generates standard vCard 3.0 text format."""
     return (
         "BEGIN:VCARD\n"
         "VERSION:3.0\n"
@@ -52,9 +173,8 @@ def generate_vcard_content(vcard):
     )
 
 
-def bake_static_site(data):
-    """Bakes HTML and physical .vcf file to the public static directory."""
-    # Ensure target output directories exist
+def bake_static_site():
+    data = get_site_data()
     vcard_dir = os.path.join(OUTPUT_DIR, "vcard")
     os.makedirs(vcard_dir, exist_ok=True)
 
@@ -71,48 +191,119 @@ def bake_static_site(data):
         f.write(rendered_html)
 
 
+# --- Routes ---
+@app.route("/login", methods=["GET", "POST"])
+def login():
+    if current_user.is_authenticated:
+        return redirect(url_for("admin"))
+
+    if request.method == "POST":
+        username = request.form.get("username", "").strip()
+        password = request.form.get("password", "")
+
+        conn = get_db_connection()
+        user_row = conn.execute(
+            "SELECT id, username, password_hash FROM users WHERE username = ?",
+            (username,),
+        ).fetchone()
+        conn.close()
+
+        if user_row and check_password_hash(user_row["password_hash"], password):
+            user = User(
+                id=user_row["id"],
+                username=user_row["username"],
+                password_hash=user_row["password_hash"],
+            )
+            login_user(user)
+            return redirect(url_for("admin"))
+
+        flash("Invalid username or password.", "danger")
+
+    return render_template("login.html")
+
+
+@app.route("/logout")
+@login_required
+def logout():
+    logout_user()
+    flash("You have been logged out.", "success")
+    return redirect(url_for("login"))
+
+
 @app.route("/", methods=["GET"])
+@login_required
 def admin():
-    data = load_data()
-    return render_template("admin.html", data=data)
+    data = get_site_data()
+    return render_template("admin.html", data=data, user=current_user)
 
 
 @app.route("/save", methods=["POST"])
+@login_required
 def save():
-    title = request.form.get("title")
-    bio = request.form.get("bio")
+    title = request.form.get("title", "")
+    bio = request.form.get("bio", "")
 
-    # Extract vCard inputs
-    vcard = {
-        "fn": request.form.get("vcard_fn"),
-        "org": request.form.get("vcard_org"),
-        "title": request.form.get("vcard_title"),
-        "email": request.form.get("vcard_email"),
-        "phone": request.form.get("vcard_phone"),
-        "url": request.form.get("vcard_url"),
-    }
+    vcard_fn = request.form.get("vcard_fn", "")
+    vcard_org = request.form.get("vcard_org", "")
+    vcard_title = request.form.get("vcard_title", "")
+    vcard_email = request.form.get("vcard_email", "")
+    vcard_phone = request.form.get("vcard_phone", "")
+    vcard_url = request.form.get("vcard_url", "")
 
-    # Extract dynamic links
     labels = request.form.getlist("link_label")
     urls = request.form.getlist("link_url")
-    links = []
+
+    conn = get_db_connection()
+    cursor = conn.cursor()
+
+    # Update site_config table
+    config_updates = {
+        "title": title,
+        "bio": bio,
+        "vcard_fn": vcard_fn,
+        "vcard_org": vcard_org,
+        "vcard_title": vcard_title,
+        "vcard_email": vcard_email,
+        "vcard_phone": vcard_phone,
+        "vcard_url": vcard_url,
+    }
+
+    for key, val in config_updates.items():
+        cursor.execute(
+            "INSERT OR REPLACE INTO site_config (key, value) VALUES (?, ?)", (key, val)
+        )
+
+    # Replace links in database
+    cursor.execute("DELETE FROM links")
+    position = 1
     for label, url in zip(labels, urls):
         if label.strip() and url.strip():
-            links.append({"label": label.strip(), "url": url.strip()})
+            cursor.execute(
+                "INSERT INTO links (label, url, position) VALUES (?, ?, ?)",
+                (label.strip(), url.strip(), position),
+            )
+            position += 1
 
-    data = {"title": title, "bio": bio, "vcard": vcard, "links": links}
+    conn.commit()
+    conn.close()
 
-    save_data(data)
-
+    # Bake out flat HTML and .vcf to static directory
     try:
-        bake_static_site(data)
-        flash("Site successfully baked to static HTML!", "success")
+        bake_static_site()
+        flash("Settings saved and static site baked successfully!", "success")
     except Exception as e:
-        flash(f"Error generating static site: {str(e)}", "danger")
+        flash(f"Database saved, but error baking static site: {str(e)}", "danger")
 
     return redirect(url_for("admin"))
 
 
 if __name__ == "__main__":
-    # Bind strictly to localhost/Tailscale interface, never expose port 5000 publicly
-    app.run(host="127.0.0.1", port=5000, debug=True)
+    init_db()
+    # Initial compilation on startup to ensure public directory matches DB state
+    try:
+        bake_static_site()
+    except Exception as e:
+        print(f"[WARN] Initial bake failed: {e}")
+
+    # Bind strictly to 127.0.0.1 / internal interface
+    app.run(host="127.0.0.1", port=5000, debug=False)

@@ -71,7 +71,22 @@
     </style>
   </head>
   <body>
-    <h2>Linktree Site Admin</h2>
+    <div
+      style="
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 20px;
+      "
+    >
+      <h2>Linktree Site Admin</h2>
+      <span style="font-size: 0.9rem">
+        Logged in as <strong>{{ user.username }}</strong> |
+        <a href="/logout" style="color: #d9534f; text-decoration: none"
+          >Logout</a
+        >
+      </span>
+    </div>
 
     {% with messages = get_flashed_messages(with_categories=true) %} {% if
     messages %} {% for category, message in messages %}
