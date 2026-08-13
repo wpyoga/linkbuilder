@@ -16,11 +16,14 @@ app.secret_key = os.environ.get(
     "FLASK_SECRET_KEY", "change-this-in-production-to-a-random-secret"
 )
 
-DB_PATH = "app.db"
-OUTPUT_DIR = "/srv/www/example.com/@info"
+# --- Configuration (Overridable via Environment Variables) ---
+DB_PATH = os.environ.get("DB_PATH", "app.db")
+OUTPUT_DIR = os.path.abspath(
+    os.environ.get("OUTPUT_DIR", "/srv/www/example.com/@info")
+)
 
 # Initial superadmin deployment credentials
-DEPLOYMENT_SUPERADMIN_USER = "admin"
+DEPLOYMENT_SUPERADMIN_USER = os.environ.get("SUPERADMIN_USER", "admin")
 # Change this password before initial run or override via env var
 DEPLOYMENT_SUPERADMIN_PASS = os.environ.get(
     "SUPERADMIN_PASSWORD", "SuperSecretPass123!"

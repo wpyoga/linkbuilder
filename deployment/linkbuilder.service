@@ -1,0 +1,13 @@
+[Unit]
+Description=LinkBuilder Flask Application
+After=network.target
+
+[Service]
+User=www-data
+Group=www-data
+WorkingDirectory=/opt/linkbuilder
+EnvironmentFile=/etc/default/linkbuilder
+ExecStart=/opt/linkbuilder/venv/bin/python3 app.py
+
+[Install]
+WantedBy=multi-user.target

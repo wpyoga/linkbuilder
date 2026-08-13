@@ -1,0 +1,7 @@
+# This file should live in /etc/default
+# Everything here, including the secret key, are examples only
+# Always change the variables when deploying
+FLASK_SECRET_KEY=b91a32f48e281c5d9a
+DB_PATH=/var/lib/linkbuilder/app.db
+OUTPUT_DIR=/srv/www/example.com/@info
+SUPERADMIN_PASSWORD=SuperSecurePassword123!

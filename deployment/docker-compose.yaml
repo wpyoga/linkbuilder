@@ -1,0 +1,12 @@
+version: '3.8'
+
+services:
+  app:
+    build: .
+    environment:
+      - DB_PATH=/data/app.db
+      - OUTPUT_DIR=/site
+      - SUPERADMIN_PASSWORD=${SUPERADMIN_PASSWORD}
+    volumes:
+      - db_data:/data
+      - static_site:/site
