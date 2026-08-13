@@ -23,9 +23,11 @@ app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_prefix=1)
 
 COOKIE_SECURE = os.environ.get("COOKIE_SECURE", "true").lower() in ("true", "1", "yes")
 app.config.update(
+    TEMPLATES_AUTO_RELOAD=True,
     SESSION_COOKIE_SECURE=COOKIE_SECURE,
     SESSION_COOKIE_HTTPONLY=True,
     SESSION_COOKIE_SAMESITE="Lax",
+    MAX_CONTENT_LENGTH=16 * 1024 * 1024,
 )
 
 DB_PATH = os.environ.get("DB_PATH", "app.db")
@@ -85,7 +87,8 @@ def init_db():
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS site_config (
             key TEXT PRIMARY KEY,
-            value TEXT
+            value TEXT,
+            blob_value BLOB
         )
     """)
 
@@ -93,9 +96,16 @@ def init_db():
         CREATE TABLE IF NOT EXISTS buttons (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             type TEXT NOT NULL,
-            position INTEGER DEFAULT 0
+            position INTEGER DEFAULT 0,
+            color TEXT DEFAULT '#0066cc'
         )
     """)
+
+    # Migration check for existing DBs lacking color column
+    cursor.execute("PRAGMA table_info(buttons)")
+    columns = [col[1] for col in cursor.fetchall()]
+    if "color" not in columns:
+        cursor.execute("ALTER TABLE buttons ADD COLUMN color TEXT DEFAULT '#0066cc'")
 
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS button_links (
@@ -106,7 +116,6 @@ def init_db():
         )
     """)
 
-    # UNIQUE constraint added to slug column
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS button_vcards (
             button_id INTEGER PRIMARY KEY,
@@ -130,18 +139,18 @@ def init_db():
             (DEPLOYMENT_SUPERADMIN_USER, hashed_pw),
         )
 
-    cursor.execute("SELECT COUNT(*) FROM site_config")
-    if cursor.fetchone()[0] == 0:
+    cursor.execute("SELECT COUNT(*) FROM site_config WHERE key = 'title'")
+    if not cursor.fetchone():
         cursor.execute(
-            "INSERT INTO site_config (key, value) VALUES (?, ?)",
-            ("title", "Example Company"),
+            "INSERT INTO site_config (key, value) VALUES ('title', 'Example Company')"
         )
         cursor.execute(
-            "INSERT INTO site_config (key, value) VALUES (?, ?)",
-            ("bio", "Software Solutions"),
+            "INSERT INTO site_config (key, value) VALUES ('bio', 'Software Solutions')"
         )
 
-        cursor.execute("INSERT INTO buttons (type, position) VALUES ('vcard', 1)")
+        cursor.execute(
+            "INSERT INTO buttons (type, position, color) VALUES ('vcard', 1, '#0066cc')"
+        )
         v_id = cursor.lastrowid
         cursor.execute(
             """
@@ -161,7 +170,9 @@ def init_db():
             ),
         )
 
-        cursor.execute("INSERT INTO buttons (type, position) VALUES ('link', 2)")
+        cursor.execute(
+            "INSERT INTO buttons (type, position, color) VALUES ('link', 2, '#0284c7')"
+        )
         l_id = cursor.lastrowid
         cursor.execute(
             """
@@ -177,16 +188,27 @@ def init_db():
 
 def get_site_data():
     conn = get_db_connection()
-    config_rows = conn.execute("SELECT key, value FROM site_config").fetchall()
-    config = {row["key"]: row["value"] for row in config_rows}
+    config_rows = conn.execute(
+        "SELECT key, value, blob_value FROM site_config"
+    ).fetchall()
+    config = {}
+    has_favicon = False
+    has_org_logo = False
+
+    for row in config_rows:
+        config[row["key"]] = row["value"]
+        if row["key"] == "favicon_blob" and row["blob_value"]:
+            has_favicon = True
+        if row["key"] == "org_logo_blob" and row["blob_value"]:
+            has_org_logo = True
 
     buttons_rows = conn.execute(
-        "SELECT id, type, position FROM buttons ORDER BY position ASC, id ASC"
+        "SELECT id, type, position, color FROM buttons ORDER BY position ASC, id ASC"
     ).fetchall()
     buttons = []
 
     for b in buttons_rows:
-        b_id, b_type = b["id"], b["type"]
+        b_id, b_type, b_color = b["id"], b["type"], b["color"] or "#0066cc"
         if b_type == "link":
             l_row = conn.execute(
                 "SELECT label, url FROM button_links WHERE button_id = ?", (b_id,)
@@ -196,6 +218,7 @@ def get_site_data():
                     {
                         "id": b_id,
                         "type": "link",
+                        "color": b_color,
                         "label": l_row["label"],
                         "url": l_row["url"],
                     }
@@ -210,6 +233,7 @@ def get_site_data():
                     {
                         "id": b_id,
                         "type": "vcard",
+                        "color": b_color,
                         "button_label": v_row["button_label"],
                         "slug": v_row["slug"],
                         "fn": v_row["fn"],
@@ -225,6 +249,10 @@ def get_site_data():
     return {
         "title": config.get("title", ""),
         "bio": config.get("bio", ""),
+        "has_favicon": has_favicon,
+        "has_org_logo": has_org_logo,
+        "favicon_filename": config.get("favicon_filename", "favicon.ico"),
+        "org_logo_filename": config.get("org_logo_filename", "logo.png"),
         "buttons": buttons,
     }
 
@@ -262,6 +290,34 @@ def generate_vcard_content(vcard):
 
 
 def bake_static_site():
+    conn = get_db_connection()
+
+    # 1. Export Image BLOBs to Public Directory
+    favicon_row = conn.execute(
+        "SELECT value, blob_value FROM site_config WHERE key = 'favicon_blob'"
+    ).fetchone()
+    favicon_filename = "favicon.ico"
+    if favicon_row and favicon_row["blob_value"]:
+        fn_row = conn.execute(
+            "SELECT value FROM site_config WHERE key = 'favicon_filename'"
+        ).fetchone()
+        if fn_row and fn_row["value"]:
+            favicon_filename = fn_row["value"]
+        with open(os.path.join(OUTPUT_DIR, favicon_filename), "wb") as f:
+            f.write(favicon_row["blob_value"])
+
+    logo_row = conn.execute(
+        "SELECT value, blob_value FROM site_config WHERE key = 'org_logo_blob'"
+    ).fetchone()
+    logo_filename = None
+    if logo_row and logo_row["blob_value"]:
+        fn_row = conn.execute(
+            "SELECT value FROM site_config WHERE key = 'org_logo_filename'"
+        ).fetchone()
+        logo_filename = fn_row["value"] if fn_row and fn_row["value"] else "logo.png"
+        with open(os.path.join(OUTPUT_DIR, logo_filename), "wb") as f:
+            f.write(logo_row["blob_value"])
+
     data = get_site_data()
     vcard_dir = os.path.join(OUTPUT_DIR, "vcard")
     os.makedirs(vcard_dir, exist_ok=True)
@@ -272,6 +328,7 @@ def bake_static_site():
             processed_buttons.append(
                 {
                     "type": "link",
+                    "color": btn.get("color", "#0066cc"),
                     "label": btn["label"],
                     "target_url": normalize_url(btn["url"]),
                 }
@@ -296,6 +353,7 @@ def bake_static_site():
             processed_buttons.append(
                 {
                     "type": "vcard",
+                    "color": btn.get("color", "#0066cc"),
                     "label": btn.get("button_label", "Save Contact"),
                     "target_url": f"./vcard/{vcard_filename}",
                 }
@@ -304,6 +362,10 @@ def bake_static_site():
     render_context = {
         "title": data["title"],
         "bio": data["bio"],
+        "favicon_filename": (
+            favicon_filename if favicon_row and favicon_row["blob_value"] else None
+        ),
+        "org_logo_filename": logo_filename,
         "buttons": processed_buttons,
     }
 
@@ -365,8 +427,8 @@ def save():
     bio = request.form.get("bio", "")
 
     types = request.form.getlist("btn_type")
+    colors = request.form.getlist("btn_color")
 
-    # Precise per-field array extraction
     link_labels = request.form.getlist("link_label")
     link_urls = request.form.getlist("link_url")
 
@@ -379,18 +441,19 @@ def save():
     vcard_phones = request.form.getlist("vcard_phone")
     vcard_urls = request.form.getlist("vcard_url")
 
-    # Reconstruct data structure strictly matching posted items
     parsed_buttons = []
     sanitized_slugs = []
 
     l_idx = 0
     v_idx = 0
 
-    for b_type in types:
+    for idx, b_type in enumerate(types):
+        b_color = colors[idx] if idx < len(colors) else "#0066cc"
         if b_type == "link":
             parsed_buttons.append(
                 {
                     "type": "link",
+                    "color": b_color,
                     "label": link_labels[l_idx] if l_idx < len(link_labels) else "",
                     "url": link_urls[l_idx] if l_idx < len(link_urls) else "",
                 }
@@ -404,6 +467,7 @@ def save():
             parsed_buttons.append(
                 {
                     "type": "vcard",
+                    "color": b_color,
                     "button_label": (
                         vcard_button_labels[v_idx]
                         if v_idx < len(vcard_button_labels)
@@ -422,13 +486,8 @@ def save():
 
     posted_state = {"title": title, "bio": bio, "buttons": parsed_buttons}
 
-    # 1. Check for Duplicate vCard Slugs BEFORE writing to DB
     if len(sanitized_slugs) != len(set(sanitized_slugs)):
-        flash(
-            "Error: Duplicate vCard slugs detected. Every vCard must have a unique filename slug.",
-            "danger",
-        )
-        # Render directly without redirecting: preserves all user input!
+        flash("Error: Duplicate vCard slugs detected.", "danger")
         return render_template("admin.html", data=posted_state, user=current_user), 400
 
     conn = get_db_connection()
@@ -444,14 +503,42 @@ def save():
             "INSERT OR REPLACE INTO site_config (key, value) VALUES ('bio', ?)", (bio,)
         )
 
+        # Process Favicon Upload as BLOB
+        if "favicon" in request.files:
+            file = request.files["favicon"]
+            if file and file.filename != "":
+                blob_bytes = file.read()
+                cursor.execute(
+                    "INSERT OR REPLACE INTO site_config (key, value, blob_value) VALUES ('favicon_blob', 'present', ?)",
+                    (sqlite3.Binary(blob_bytes),),
+                )
+                cursor.execute(
+                    "INSERT OR REPLACE INTO site_config (key, value) VALUES ('favicon_filename', ?)",
+                    (file.filename,),
+                )
+
+        # Process Organization Logo Upload as BLOB
+        if "org_logo" in request.files:
+            file = request.files["org_logo"]
+            if file and file.filename != "":
+                blob_bytes = file.read()
+                cursor.execute(
+                    "INSERT OR REPLACE INTO site_config (key, value, blob_value) VALUES ('org_logo_blob', 'present', ?)",
+                    (sqlite3.Binary(blob_bytes),),
+                )
+                cursor.execute(
+                    "INSERT OR REPLACE INTO site_config (key, value) VALUES ('org_logo_filename', ?)",
+                    (file.filename,),
+                )
+
         cursor.execute("DELETE FROM button_links")
         cursor.execute("DELETE FROM button_vcards")
         cursor.execute("DELETE FROM buttons")
 
         for position, btn in enumerate(parsed_buttons, start=1):
             cursor.execute(
-                "INSERT INTO buttons (type, position) VALUES (?, ?)",
-                (btn["type"], position),
+                "INSERT INTO buttons (type, position, color) VALUES (?, ?, ?)",
+                (btn["type"], position, btn["color"]),
             )
             btn_id = cursor.lastrowid
 

@@ -27,7 +27,8 @@
       }
       input[type="text"],
       input[type="email"],
-      textarea {
+      textarea,
+      input[type="file"] {
         width: 100%;
         padding: 8px;
         margin-top: 5px;
@@ -68,6 +69,19 @@
         color: #475569;
         background: #f1f5f9;
         padding: 8px 12px;
+      }
+      .color-picker-wrapper {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        margin-top: 8px;
+      }
+      .color-picker-wrapper input[type="color"] {
+        border: none;
+        width: 32px;
+        height: 32px;
+        cursor: pointer;
+        background: transparent;
       }
       .control-btns {
         display: flex;
@@ -183,14 +197,31 @@
     <div class="alert alert-{{ category }}">{{ message }}</div>
     {% endfor %} {% endif %} {% endwith %}
 
-    <form action="/save" method="POST" id="admin-form">
+    <form
+      action="/save"
+      method="POST"
+      enctype="multipart/form-data"
+      id="admin-form"
+    >
       <div class="card">
-        <h3>General Info</h3>
+        <h3>General Info & Media</h3>
         <label>Page Title / Name</label>
         <input type="text" name="title" value="{{ data.title }}" required />
 
         <label>Bio / Description</label>
         <textarea name="bio" rows="3">{{ data.bio }}</textarea>
+
+        <label>Favicon Image (.ico, .png, .svg)</label>
+        <input type="file" name="favicon" accept="image/*,.ico" />
+        {% if data.has_favicon %}<small style="color: #16a34a"
+          >✓ Custom favicon currently stored in database</small
+        >{% endif %}
+
+        <label>Organization Logo Header (.png, .jpg, .svg)</label>
+        <input type="file" name="org_logo" accept="image/*" />
+        {% if data.has_org_logo %}<small style="color: #16a34a"
+          >✓ Custom logo currently stored in database</small
+        >{% endif %}
       </div>
 
       <div class="card">
@@ -228,13 +259,22 @@
             <div class="block-content">
               <input type="hidden" name="btn_type" value="{{ btn.type }}" />
 
+              <div class="color-picker-wrapper">
+                <label style="margin: 0">Button Color:</label>
+                <input
+                  type="color"
+                  name="btn_color"
+                  value="{{ btn.color or '#0066cc' }}"
+                />
+              </div>
+
               {% if btn.type == 'link' %}
               <label>Button Label</label>
               <input
                 type="text"
                 name="link_label"
                 value="{{ btn.label }}"
-                placeholder="e.g. Website"
+                placeholder="e.g. 🌐 Website"
                 oninput="updateSummaryTitle(this)"
                 required
               />
@@ -252,7 +292,7 @@
                 type="text"
                 name="vcard_button_label"
                 value="{{ btn.button_label }}"
-                placeholder="e.g. Save Contact"
+                placeholder="e.g. 📇 Save Contact"
                 oninput="updateSummaryTitle(this)"
                 required
               />
@@ -271,7 +311,6 @@
                 <code>./vcard/{{ btn.slug or 'contact' }}.vcf</code></small
               >
 
-              <!-- Nested Collapsible Accordion for Long vCard Fields -->
               <details class="nested-vcard-details">
                 <summary>
                   📁 Edit Contact Card Details (Name, Phone, Email...)
@@ -383,8 +422,12 @@
           </summary>
           <div class="block-content">
             <input type="hidden" name="btn_type" value="link">
+            <div class="color-picker-wrapper">
+              <label style="margin:0;">Button Color:</label>
+              <input type="color" name="btn_color" value="#0066cc">
+            </div>
             <label>Button Label</label>
-            <input type="text" name="link_label" placeholder="e.g. Website" oninput="updateSummaryTitle(this)" required>
+            <input type="text" name="link_label" placeholder="e.g. 🌐 Website" oninput="updateSummaryTitle(this)" required>
             <label>Target URL</label>
             <input type="text" name="link_url" placeholder="https://..." required>
           </div>
@@ -411,9 +454,13 @@
           </summary>
           <div class="block-content">
             <input type="hidden" name="btn_type" value="vcard">
+            <div class="color-picker-wrapper">
+              <label style="margin:0;">Button Color:</label>
+              <input type="color" name="btn_color" value="#0284c7">
+            </div>
             <label>Button Label on Public Page</label>
-            <input type="text" name="vcard_button_label" placeholder="e.g. Save Contact" oninput="updateSummaryTitle(this)" required>
-
+            <input type="text" name="vcard_button_label" placeholder="e.g. 📇 Save Contact" oninput="updateSummaryTitle(this)" required>
+            
             <label>vCard Filename Slug</label>
             <input type="text" name="vcard_slug" placeholder="e.g. john-doe" oninput="updateSlugPreview(this)" required>
             <small class="slug-preview">Generates <code>./vcard/contact.vcf</code></small>
