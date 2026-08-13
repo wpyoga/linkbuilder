@@ -6,7 +6,7 @@
     <style>
       body {
         font-family: system-ui, sans-serif;
-        max-width: 650px;
+        max-width: 700px;
         margin: 20px auto;
         padding: 0 15px;
         background: #f4f4f9;
@@ -23,6 +23,7 @@
         font-weight: bold;
         display: block;
         margin-top: 10px;
+        font-size: 0.9rem;
       }
       input[type="text"],
       input[type="email"],
@@ -34,25 +35,89 @@
         border: 1px solid #ccc;
         border-radius: 4px;
       }
-      .link-row {
+      .button-block {
+        background: #fff;
+        border: 1px solid #ddd;
+        border-radius: 6px;
+        margin-bottom: 12px;
+        box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+      }
+      summary {
+        padding: 12px 15px;
+        font-weight: bold;
+        cursor: pointer;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        background: #fdfdfd;
+        border-radius: 6px;
+        user-select: none;
+      }
+      .block-content {
+        padding: 15px;
+        border-top: 1px solid #eee;
+      }
+      .nested-vcard-details {
+        margin-top: 12px;
+        border: 1px dashed #cbd5e1;
+        border-radius: 6px;
+        background: #f8fafc;
+      }
+      .nested-vcard-details summary {
+        font-size: 0.85rem;
+        color: #475569;
+        background: #f1f5f9;
+        padding: 8px 12px;
+      }
+      .control-btns {
+        display: flex;
+        gap: 5px;
+      }
+      .control-btns button {
+        background: #e2e8f0;
+        color: #334155;
+        border: none;
+        padding: 4px 8px;
+        border-radius: 4px;
+        cursor: pointer;
+        font-size: 0.8rem;
+      }
+      .control-btns button:hover {
+        background: #cbd5e1;
+      }
+      .control-btns button.btn-del {
+        background: #fee2e2;
+        color: #991b1b;
+      }
+      .control-btns button.btn-del:hover {
+        background: #fca5a5;
+      }
+      .add-actions {
         display: flex;
         gap: 10px;
-        margin-top: 10px;
+        margin-top: 15px;
       }
-      .link-row input {
-        flex: 1;
-      }
-      button {
-        background: #0066cc;
+      .btn-add {
+        background: #28a745;
         color: #fff;
         border: none;
         padding: 10px 15px;
         border-radius: 4px;
         cursor: pointer;
-        margin-top: 15px;
+        font-weight: 500;
       }
-      button.btn-add {
-        background: #28a745;
+      .btn-add-vcard {
+        background: #0284c7;
+      }
+      button.submit-btn {
+        background: #0066cc;
+        color: #fff;
+        border: none;
+        padding: 12px;
+        border-radius: 6px;
+        cursor: pointer;
+        font-size: 1.1em;
+        width: 100%;
         margin-top: 10px;
       }
       .alert {
@@ -67,6 +132,31 @@
       .alert-danger {
         background: #f8d7da;
         color: #721c24;
+      }
+      .type-tag {
+        font-size: 0.75rem;
+        padding: 2px 6px;
+        border-radius: 4px;
+        text-transform: uppercase;
+        margin-left: 8px;
+      }
+      .tag-link {
+        background: #e0f2fe;
+        color: #0369a1;
+      }
+      .tag-vcard {
+        background: #f0fdf4;
+        color: #15803d;
+      }
+      .slug-preview {
+        display: block;
+        margin-top: 4px;
+        font-size: 0.85rem;
+        color: #64748b;
+      }
+      .slug-preview code {
+        color: #0284c7;
+        font-weight: bold;
       }
     </style>
   </head>
@@ -93,7 +183,7 @@
     <div class="alert alert-{{ category }}">{{ message }}</div>
     {% endfor %} {% endif %} {% endwith %}
 
-    <form action="/save" method="POST">
+    <form action="/save" method="POST" id="admin-form">
       <div class="card">
         <h3>General Info</h3>
         <label>Page Title / Name</label>
@@ -103,78 +193,251 @@
         <textarea name="bio" rows="3">{{ data.bio }}</textarea>
       </div>
 
-      <div class="form-group">
-        <label for="vcard_slug">vCard Filename Slug</label>
-        <input
-          type="text"
-          id="vcard_slug"
-          name="vcard_slug"
-          value="{{ data.vcard.slug }}"
-          placeholder="e.g. contact or john-doe"
-          required
-        />
-        <small
-          >Generates <code>./vcard/&lt;slug&gt;.vcf</code>. Re-saving with the
-          same slug overwrites the previous file.</small
-        >
-      </div>
-
       <div class="card">
-        <h3>vCard Details (Contact File)</h3>
-        <label>Full Name</label>
-        <input type="text" name="vcard_fn" value="{{ data.vcard.fn }}" />
-        <label>Organization</label>
-        <input type="text" name="vcard_org" value="{{ data.vcard.org }}" />
-        <label>Job Title</label>
-        <input type="text" name="vcard_title" value="{{ data.vcard.title }}" />
-        <label>Email</label>
-        <input type="email" name="vcard_email" value="{{ data.vcard.email }}" />
-        <label>Phone Number</label>
-        <input type="text" name="vcard_phone" value="{{ data.vcard.phone }}" />
-        <label>Website URL</label>
-        <input type="text" name="vcard_url" value="{{ data.vcard.url }}" />
-      </div>
+        <h3>Page Buttons (Arrange & Order)</h3>
+        <div id="buttons-container">
+          {% for btn in data.buttons %}
+          <details class="button-block" open>
+            <summary>
+              <div>
+                <span class="block-title">
+                  {% if btn.type == 'link' %}{{ btn.label or 'New Link' }}{%
+                  else %}{{ btn.button_label or 'New vCard' }}{% endif %}
+                </span>
+                <span
+                  class="type-tag {% if btn.type == 'link' %}tag-link{% else %}tag-vcard{% endif %}"
+                  >{{ btn.type }}</span
+                >
+              </div>
+              <div class="control-btns" onclick="event.preventDefault()">
+                <button type="button" onclick="moveBlock(this, -1)">
+                  ▲ Up
+                </button>
+                <button type="button" onclick="moveBlock(this, 1)">
+                  ▼ Down
+                </button>
+                <button
+                  type="button"
+                  class="btn-del"
+                  onclick="deleteBlock(this)"
+                >
+                  Delete
+                </button>
+              </div>
+            </summary>
+            <div class="block-content">
+              <input type="hidden" name="btn_type" value="{{ btn.type }}" />
 
-      <div class="card">
-        <h3>Links</h3>
-        <div id="links-container">
-          {% for link in data.links %}
-          <div class="link-row">
-            <input
-              type="text"
-              name="link_label"
-              value="{{ link.label }}"
-              placeholder="Label (e.g. Website)"
-            />
-            <input
-              type="text"
-              name="link_url"
-              value="{{ link.url }}"
-              placeholder="URL (https://...)"
-            />
-          </div>
+              {% if btn.type == 'link' %}
+              <label>Button Label</label>
+              <input
+                type="text"
+                name="link_label"
+                value="{{ btn.label }}"
+                placeholder="e.g. Website"
+                oninput="updateSummaryTitle(this)"
+                required
+              />
+              <label>Target URL</label>
+              <input
+                type="text"
+                name="link_url"
+                value="{{ btn.url }}"
+                placeholder="https://..."
+                required
+              />
+              {% else %}
+              <label>Button Label on Public Page</label>
+              <input
+                type="text"
+                name="vcard_button_label"
+                value="{{ btn.button_label }}"
+                placeholder="e.g. Save Contact"
+                oninput="updateSummaryTitle(this)"
+                required
+              />
+
+              <label>vCard Filename Slug</label>
+              <input
+                type="text"
+                name="vcard_slug"
+                value="{{ btn.slug }}"
+                placeholder="e.g. contact"
+                oninput="updateSlugPreview(this)"
+                required
+              />
+              <small class="slug-preview"
+                >Generates
+                <code>./vcard/{{ btn.slug or 'contact' }}.vcf</code></small
+              >
+
+              <!-- Nested Collapsible Accordion for Long vCard Fields -->
+              <details class="nested-vcard-details">
+                <summary>
+                  📁 Edit Contact Card Details (Name, Phone, Email...)
+                </summary>
+                <div style="padding: 10px 12px">
+                  <label>Full Name</label>
+                  <input type="text" name="vcard_fn" value="{{ btn.fn }}" />
+                  <label>Organization</label>
+                  <input type="text" name="vcard_org" value="{{ btn.org }}" />
+                  <label>Job Title</label>
+                  <input
+                    type="text"
+                    name="vcard_title"
+                    value="{{ btn.title }}"
+                  />
+                  <label>Email</label>
+                  <input
+                    type="email"
+                    name="vcard_email"
+                    value="{{ btn.email }}"
+                  />
+                  <label>Phone Number</label>
+                  <input
+                    type="text"
+                    name="vcard_phone"
+                    value="{{ btn.phone }}"
+                  />
+                  <label>Website URL</label>
+                  <input type="text" name="vcard_url" value="{{ btn.url }}" />
+                </div>
+              </details>
+              {% endif %}
+            </div>
+          </details>
           {% endfor %}
         </div>
-        <button type="button" class="btn-add" onclick="addLinkRow()">
-          + Add Another Link
-        </button>
+
+        <div class="add-actions">
+          <button type="button" class="btn-add" onclick="addLinkBlock()">
+            + Add External Link
+          </button>
+          <button
+            type="button"
+            class="btn-add btn-add-vcard"
+            onclick="addVCardBlock()"
+          >
+            + Add Contact (vCard)
+          </button>
+        </div>
       </div>
 
-      <button type="submit" style="font-size: 1.1em; width: 100%">
-        Save & Bake Static Site
-      </button>
+      <button type="submit" class="submit-btn">Save & Bake Static Site</button>
     </form>
 
     <script>
-      function addLinkRow() {
-        const container = document.getElementById("links-container");
-        const div = document.createElement("div");
-        div.className = "link-row";
-        div.innerHTML = `
-                <input type="text" name="link_label" placeholder="Label">
-                <input type="text" name="link_url" placeholder="URL">
-            `;
-        container.appendChild(div);
+      function updateSummaryTitle(inputEl) {
+        const block = inputEl.closest(".button-block");
+        const titleSpan = block.querySelector(".block-title");
+        titleSpan.textContent = inputEl.value.trim() || "Untitled Button";
+      }
+
+      function sanitizeSlugJs(text) {
+        return (
+          text
+            .trim()
+            .toLowerCase()
+            .replace(/[^a-z0-9_\-]/g, "_") || "contact"
+        );
+      }
+
+      function updateSlugPreview(inputEl) {
+        const block = inputEl.closest(".button-block");
+        const previewCode = block.querySelector(".slug-preview code");
+        const cleanSlug = sanitizeSlugJs(inputEl.value);
+        previewCode.textContent = `./vcard/${cleanSlug}.vcf`;
+      }
+
+      function moveBlock(btn, direction) {
+        const block = btn.closest(".button-block");
+        if (direction === -1 && block.previousElementSibling) {
+          block.parentNode.insertBefore(block, block.previousElementSibling);
+        } else if (direction === 1 && block.nextElementSibling) {
+          block.parentNode.insertBefore(block.nextElementSibling, block);
+        }
+      }
+
+      function deleteBlock(btn) {
+        if (confirm("Delete this button block?")) {
+          btn.closest(".button-block").remove();
+        }
+      }
+
+      function addLinkBlock() {
+        const container = document.getElementById("buttons-container");
+        const block = document.createElement("details");
+        block.className = "button-block";
+        block.open = true;
+        block.innerHTML = `
+          <summary>
+            <div>
+              <span class="block-title">New External Link</span>
+              <span class="type-tag tag-link">link</span>
+            </div>
+            <div class="control-btns" onclick="event.preventDefault();">
+              <button type="button" onclick="moveBlock(this, -1)">▲ Up</button>
+              <button type="button" onclick="moveBlock(this, 1)">▼ Down</button>
+              <button type="button" class="btn-del" onclick="deleteBlock(this)">Delete</button>
+            </div>
+          </summary>
+          <div class="block-content">
+            <input type="hidden" name="btn_type" value="link">
+            <label>Button Label</label>
+            <input type="text" name="link_label" placeholder="e.g. Website" oninput="updateSummaryTitle(this)" required>
+            <label>Target URL</label>
+            <input type="text" name="link_url" placeholder="https://..." required>
+          </div>
+        `;
+        container.appendChild(block);
+      }
+
+      function addVCardBlock() {
+        const container = document.getElementById("buttons-container");
+        const block = document.createElement("details");
+        block.className = "button-block";
+        block.open = true;
+        block.innerHTML = `
+          <summary>
+            <div>
+              <span class="block-title">New Contact (vCard)</span>
+              <span class="type-tag tag-vcard">vcard</span>
+            </div>
+            <div class="control-btns" onclick="event.preventDefault();">
+              <button type="button" onclick="moveBlock(this, -1)">▲ Up</button>
+              <button type="button" onclick="moveBlock(this, 1)">▼ Down</button>
+              <button type="button" class="btn-del" onclick="deleteBlock(this)">Delete</button>
+            </div>
+          </summary>
+          <div class="block-content">
+            <input type="hidden" name="btn_type" value="vcard">
+            <label>Button Label on Public Page</label>
+            <input type="text" name="vcard_button_label" placeholder="e.g. Save Contact" oninput="updateSummaryTitle(this)" required>
+
+            <label>vCard Filename Slug</label>
+            <input type="text" name="vcard_slug" placeholder="e.g. john-doe" oninput="updateSlugPreview(this)" required>
+            <small class="slug-preview">Generates <code>./vcard/contact.vcf</code></small>
+
+            <details class="nested-vcard-details" open>
+              <summary>📁 Edit Contact Card Details (Name, Phone, Email...)</summary>
+              <div style="padding: 10px 12px;">
+                <label>Full Name</label>
+                <input type="text" name="vcard_fn">
+                <label>Organization</label>
+                <input type="text" name="vcard_org">
+                <label>Job Title</label>
+                <input type="text" name="vcard_title">
+                <label>Email</label>
+                <input type="email" name="vcard_email">
+                <label>Phone Number</label>
+                <input type="text" name="vcard_phone">
+                <label>Website URL</label>
+                <input type="text" name="vcard_url">
+              </div>
+            </details>
+          </div>
+        `;
+        container.appendChild(block);
       }
     </script>
   </body>

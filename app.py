@@ -19,10 +19,8 @@ app.secret_key = os.environ.get(
     "FLASK_SECRET_KEY", "change-this-in-production-to-a-random-secret"
 )
 
-# Trust reverse proxy headers (e.g., Caddy setting X-Forwarded-Proto)
 app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_prefix=1)
 
-# Cookie Security Configuration
 COOKIE_SECURE = os.environ.get("COOKIE_SECURE", "true").lower() in ("true", "1", "yes")
 app.config.update(
     SESSION_COOKIE_SECURE=COOKIE_SECURE,
@@ -30,18 +28,14 @@ app.config.update(
     SESSION_COOKIE_SAMESITE="Lax",
 )
 
-# --- Configuration (Overridable via Environment Variables) ---
 DB_PATH = os.environ.get("DB_PATH", "app.db")
 OUTPUT_DIR = os.path.abspath(os.environ.get("OUTPUT_DIR", "/srv/www/example.com/@info"))
 
-# Initial superadmin deployment credentials
 DEPLOYMENT_SUPERADMIN_USER = os.environ.get("SUPERADMIN_USER", "admin")
-# Change this password before initial run or override via env var
 DEPLOYMENT_SUPERADMIN_PASS = os.environ.get(
     "SUPERADMIN_PASSWORD", "SuperSecretPass123!"
 )
 
-# --- Flask-Login Setup ---
 login_manager = LoginManager()
 login_manager.init_app(app)
 login_manager.login_view = "login"
@@ -70,7 +64,6 @@ def load_user(user_id):
     return None
 
 
-# --- Database Initialization & Helpers ---
 def get_db_connection():
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
@@ -81,7 +74,6 @@ def init_db():
     conn = get_db_connection()
     cursor = conn.cursor()
 
-    # Users table
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS users (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -90,7 +82,6 @@ def init_db():
         )
     """)
 
-    # Site configuration key-value table
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS site_config (
             key TEXT PRIMARY KEY,
@@ -98,17 +89,39 @@ def init_db():
         )
     """)
 
-    # Dynamic links table
     cursor.execute("""
-        CREATE TABLE IF NOT EXISTS links (
+        CREATE TABLE IF NOT EXISTS buttons (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            label TEXT NOT NULL,
-            url TEXT NOT NULL,
+            type TEXT NOT NULL,
             position INTEGER DEFAULT 0
         )
     """)
 
-    # Seed default superadmin if no users exist
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS button_links (
+            button_id INTEGER PRIMARY KEY,
+            label TEXT NOT NULL,
+            url TEXT NOT NULL,
+            FOREIGN KEY (button_id) REFERENCES buttons(id) ON DELETE CASCADE
+        )
+    """)
+
+    # UNIQUE constraint added to slug column
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS button_vcards (
+            button_id INTEGER PRIMARY KEY,
+            button_label TEXT NOT NULL,
+            slug TEXT UNIQUE NOT NULL,
+            fn TEXT,
+            org TEXT,
+            title TEXT,
+            email TEXT,
+            phone TEXT,
+            url TEXT,
+            FOREIGN KEY (button_id) REFERENCES buttons(id) ON DELETE CASCADE
+        )
+    """)
+
     cursor.execute("SELECT COUNT(*) FROM users")
     if cursor.fetchone()[0] == 0:
         hashed_pw = generate_password_hash(DEPLOYMENT_SUPERADMIN_PASS, method="scrypt")
@@ -116,31 +129,46 @@ def init_db():
             "INSERT INTO users (username, password_hash) VALUES (?, ?)",
             (DEPLOYMENT_SUPERADMIN_USER, hashed_pw),
         )
-        print(f"[INIT] Superadmin created. Username: '{DEPLOYMENT_SUPERADMIN_USER}'")
 
-    # Seed default site config if empty
     cursor.execute("SELECT COUNT(*) FROM site_config")
     if cursor.fetchone()[0] == 0:
-        default_config = {
-            "title": "Example Company",
-            "bio": "Software Solutions",
-            "vcard_fn": "John Doe",
-            "vcard_org": "Example Inc.",
-            "vcard_title": "Systems Engineer",
-            "vcard_email": "john@example.com",
-            "vcard_phone": "+1234567890",
-            "vcard_url": "https://example.com",
-        }
-        for k, v in default_config.items():
-            cursor.execute("INSERT INTO site_config (key, value) VALUES (?, ?)", (k, v))
-
         cursor.execute(
-            "INSERT INTO links (label, url, position) VALUES (?, ?, ?)",
-            ("Official Website", "https://example.com", 1),
+            "INSERT INTO site_config (key, value) VALUES (?, ?)",
+            ("title", "Example Company"),
         )
         cursor.execute(
-            "INSERT INTO links (label, url, position) VALUES (?, ?, ?)",
-            ("Documentation", "https://docs.example.com", 2),
+            "INSERT INTO site_config (key, value) VALUES (?, ?)",
+            ("bio", "Software Solutions"),
+        )
+
+        cursor.execute("INSERT INTO buttons (type, position) VALUES ('vcard', 1)")
+        v_id = cursor.lastrowid
+        cursor.execute(
+            """
+            INSERT INTO button_vcards (button_id, button_label, slug, fn, org, title, email, phone, url)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+            (
+                v_id,
+                "Save Contact",
+                "contact",
+                "John Doe",
+                "Example Inc.",
+                "Systems Engineer",
+                "john@example.com",
+                "+1234567890",
+                "https://example.com",
+            ),
+        )
+
+        cursor.execute("INSERT INTO buttons (type, position) VALUES ('link', 2)")
+        l_id = cursor.lastrowid
+        cursor.execute(
+            """
+            INSERT INTO button_links (button_id, label, url)
+            VALUES (?, ?, ?)
+        """,
+            (l_id, "Official Website", "https://example.com"),
         )
 
     conn.commit()
@@ -152,36 +180,62 @@ def get_site_data():
     config_rows = conn.execute("SELECT key, value FROM site_config").fetchall()
     config = {row["key"]: row["value"] for row in config_rows}
 
-    links_rows = conn.execute(
-        "SELECT label, url FROM links ORDER BY position ASC, id ASC"
+    buttons_rows = conn.execute(
+        "SELECT id, type, position FROM buttons ORDER BY position ASC, id ASC"
     ).fetchall()
-    links = [{"label": row["label"], "url": row["url"]} for row in links_rows]
-    conn.close()
+    buttons = []
 
+    for b in buttons_rows:
+        b_id, b_type = b["id"], b["type"]
+        if b_type == "link":
+            l_row = conn.execute(
+                "SELECT label, url FROM button_links WHERE button_id = ?", (b_id,)
+            ).fetchone()
+            if l_row:
+                buttons.append(
+                    {
+                        "id": b_id,
+                        "type": "link",
+                        "label": l_row["label"],
+                        "url": l_row["url"],
+                    }
+                )
+        elif b_type == "vcard":
+            v_row = conn.execute(
+                "SELECT button_label, slug, fn, org, title, email, phone, url FROM button_vcards WHERE button_id = ?",
+                (b_id,),
+            ).fetchone()
+            if v_row:
+                buttons.append(
+                    {
+                        "id": b_id,
+                        "type": "vcard",
+                        "button_label": v_row["button_label"],
+                        "slug": v_row["slug"],
+                        "fn": v_row["fn"],
+                        "org": v_row["org"],
+                        "title": v_row["title"],
+                        "email": v_row["email"],
+                        "phone": v_row["phone"],
+                        "url": v_row["url"],
+                    }
+                )
+
+    conn.close()
     return {
         "title": config.get("title", ""),
         "bio": config.get("bio", ""),
-        "vcard": {
-            "fn": config.get("vcard_fn", ""),
-            "org": config.get("vcard_org", ""),
-            "title": config.get("vcard_title", ""),
-            "email": config.get("vcard_email", ""),
-            "phone": config.get("vcard_phone", ""),
-            "url": config.get("vcard_url", ""),
-        },
-        "links": links,
+        "buttons": buttons,
     }
 
 
 def sanitize_slug(name: str) -> str:
-    """Sanitizes user input into a deterministic filename string."""
     name = name.strip().lower()
     name = re.sub(r"[^a-z0-9_\-]", "_", name)
     return name or "contact"
 
 
 def normalize_url(url: str) -> str:
-    """Ensures external domains have https:// while preserving relative paths/schemes."""
     url = url.strip()
     if not url:
         return ""
@@ -193,7 +247,6 @@ def normalize_url(url: str) -> str:
     return url
 
 
-# --- Static Compiler (Write-Only output) ---
 def generate_vcard_content(vcard):
     return (
         "BEGIN:VCARD\n"
@@ -208,41 +261,58 @@ def generate_vcard_content(vcard):
     )
 
 
-# --- Static Compiler ---
 def bake_static_site():
     data = get_site_data()
     vcard_dir = os.path.join(OUTPUT_DIR, "vcard")
     os.makedirs(vcard_dir, exist_ok=True)
 
-    vcard_info = data.get("vcard", {})
-    slug = sanitize_slug(vcard_info.get("slug", "contact"))
+    processed_buttons = []
+    for btn in data.get("buttons", []):
+        if btn["type"] == "link":
+            processed_buttons.append(
+                {
+                    "type": "link",
+                    "label": btn["label"],
+                    "target_url": normalize_url(btn["url"]),
+                }
+            )
+        elif btn["type"] == "vcard":
+            slug = sanitize_slug(btn.get("slug", "contact"))
+            vcard_filename = f"{slug}.vcf"
+            vcard_path = os.path.join(vcard_dir, vcard_filename)
 
-    # 1. Write vCard using the user-specified deterministic slug
-    vcard_filename = f"{slug}.vcf"
-    vcard_path = os.path.join(vcard_dir, vcard_filename)
+            vcard_data = {
+                "fn": btn.get("fn", ""),
+                "org": btn.get("org", ""),
+                "title": btn.get("title", ""),
+                "email": btn.get("email", ""),
+                "phone": btn.get("phone", ""),
+                "url": normalize_url(btn.get("url", "")),
+            }
 
-    # Normalize URL field in vCard
-    vcard_info["url"] = normalize_url(vcard_info.get("url", ""))
+            with open(vcard_path, "w", encoding="utf-8") as f:
+                f.write(generate_vcard_content(vcard_data))
 
-    vcard_content = generate_vcard_content(vcard_info)
-    with open(vcard_path, "w", encoding="utf-8") as f:
-        f.write(vcard_content)
+            processed_buttons.append(
+                {
+                    "type": "vcard",
+                    "label": btn.get("button_label", "Save Contact"),
+                    "target_url": f"./vcard/{vcard_filename}",
+                }
+            )
 
-    # 2. Pass relative vcard path to site context so template links properly
-    data["vcard_relative_path"] = f"./vcard/{vcard_filename}"
+    render_context = {
+        "title": data["title"],
+        "bio": data["bio"],
+        "buttons": processed_buttons,
+    }
 
-    # Normalize external link URLs
-    for link in data.get("links", []):
-        link["url"] = normalize_url(link["url"])
-
-    # 3. Render index.html
-    rendered_html = render_template("site_template.html", data=data)
+    rendered_html = render_template("site_template.html", data=render_context)
     index_path = os.path.join(OUTPUT_DIR, "index.html")
     with open(index_path, "w", encoding="utf-8") as f:
         f.write(rendered_html)
 
 
-# --- Routes ---
 @app.route("/login", methods=["GET", "POST"])
 def login():
     if current_user.is_authenticated:
@@ -294,53 +364,130 @@ def save():
     title = request.form.get("title", "")
     bio = request.form.get("bio", "")
 
-    vcard_slug = request.form.get("vcard_slug", "")
-    vcard_fn = request.form.get("vcard_fn", "")
-    vcard_org = request.form.get("vcard_org", "")
-    vcard_title = request.form.get("vcard_title", "")
-    vcard_email = request.form.get("vcard_email", "")
-    vcard_phone = request.form.get("vcard_phone", "")
-    vcard_url = request.form.get("vcard_url", "")
+    types = request.form.getlist("btn_type")
 
-    labels = request.form.getlist("link_label")
-    urls = request.form.getlist("link_url")
+    # Precise per-field array extraction
+    link_labels = request.form.getlist("link_label")
+    link_urls = request.form.getlist("link_url")
+
+    vcard_button_labels = request.form.getlist("vcard_button_label")
+    vcard_slugs = request.form.getlist("vcard_slug")
+    vcard_fns = request.form.getlist("vcard_fn")
+    vcard_orgs = request.form.getlist("vcard_org")
+    vcard_titles = request.form.getlist("vcard_title")
+    vcard_emails = request.form.getlist("vcard_email")
+    vcard_phones = request.form.getlist("vcard_phone")
+    vcard_urls = request.form.getlist("vcard_url")
+
+    # Reconstruct data structure strictly matching posted items
+    parsed_buttons = []
+    sanitized_slugs = []
+
+    l_idx = 0
+    v_idx = 0
+
+    for b_type in types:
+        if b_type == "link":
+            parsed_buttons.append(
+                {
+                    "type": "link",
+                    "label": link_labels[l_idx] if l_idx < len(link_labels) else "",
+                    "url": link_urls[l_idx] if l_idx < len(link_urls) else "",
+                }
+            )
+            l_idx += 1
+        elif b_type == "vcard":
+            raw_slug = vcard_slugs[v_idx] if v_idx < len(vcard_slugs) else "contact"
+            clean_slug = sanitize_slug(raw_slug)
+            sanitized_slugs.append(clean_slug)
+
+            parsed_buttons.append(
+                {
+                    "type": "vcard",
+                    "button_label": (
+                        vcard_button_labels[v_idx]
+                        if v_idx < len(vcard_button_labels)
+                        else "Save Contact"
+                    ),
+                    "slug": clean_slug,
+                    "fn": vcard_fns[v_idx] if v_idx < len(vcard_fns) else "",
+                    "org": vcard_orgs[v_idx] if v_idx < len(vcard_orgs) else "",
+                    "title": vcard_titles[v_idx] if v_idx < len(vcard_titles) else "",
+                    "email": vcard_emails[v_idx] if v_idx < len(vcard_emails) else "",
+                    "phone": vcard_phones[v_idx] if v_idx < len(vcard_phones) else "",
+                    "url": vcard_urls[v_idx] if v_idx < len(vcard_urls) else "",
+                }
+            )
+            v_idx += 1
+
+    posted_state = {"title": title, "bio": bio, "buttons": parsed_buttons}
+
+    # 1. Check for Duplicate vCard Slugs BEFORE writing to DB
+    if len(sanitized_slugs) != len(set(sanitized_slugs)):
+        flash(
+            "Error: Duplicate vCard slugs detected. Every vCard must have a unique filename slug.",
+            "danger",
+        )
+        # Render directly without redirecting: preserves all user input!
+        return render_template("admin.html", data=posted_state, user=current_user), 400
 
     conn = get_db_connection()
     cursor = conn.cursor()
 
-    # Update site_config table
-    config_updates = {
-        "title": title,
-        "bio": bio,
-        "vcard_slug": vcard_slug,
-        "vcard_fn": vcard_fn,
-        "vcard_org": vcard_org,
-        "vcard_title": vcard_title,
-        "vcard_email": vcard_email,
-        "vcard_phone": vcard_phone,
-        "vcard_url": vcard_url,
-    }
-
-    for key, val in config_updates.items():
+    try:
+        cursor.execute("BEGIN TRANSACTION")
         cursor.execute(
-            "INSERT OR REPLACE INTO site_config (key, value) VALUES (?, ?)", (key, val)
+            "INSERT OR REPLACE INTO site_config (key, value) VALUES ('title', ?)",
+            (title,),
+        )
+        cursor.execute(
+            "INSERT OR REPLACE INTO site_config (key, value) VALUES ('bio', ?)", (bio,)
         )
 
-    # Replace links in database
-    cursor.execute("DELETE FROM links")
-    position = 1
-    for label, url in zip(labels, urls):
-        if label.strip() and url.strip():
-            cursor.execute(
-                "INSERT INTO links (label, url, position) VALUES (?, ?, ?)",
-                (label.strip(), url.strip(), position),
-            )
-            position += 1
+        cursor.execute("DELETE FROM button_links")
+        cursor.execute("DELETE FROM button_vcards")
+        cursor.execute("DELETE FROM buttons")
 
-    conn.commit()
+        for position, btn in enumerate(parsed_buttons, start=1):
+            cursor.execute(
+                "INSERT INTO buttons (type, position) VALUES (?, ?)",
+                (btn["type"], position),
+            )
+            btn_id = cursor.lastrowid
+
+            if btn["type"] == "link":
+                cursor.execute(
+                    "INSERT INTO button_links (button_id, label, url) VALUES (?, ?, ?)",
+                    (btn_id, btn["label"], btn["url"]),
+                )
+            elif btn["type"] == "vcard":
+                cursor.execute(
+                    """
+                    INSERT INTO button_vcards (button_id, button_label, slug, fn, org, title, email, phone, url)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                    (
+                        btn_id,
+                        btn["button_label"],
+                        btn["slug"],
+                        btn["fn"],
+                        btn["org"],
+                        btn["title"],
+                        btn["email"],
+                        btn["phone"],
+                        btn["url"],
+                    ),
+                )
+
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        conn.close()
+        flash(f"Database error during save: {str(e)}", "danger")
+        return render_template("admin.html", data=posted_state, user=current_user), 500
+
     conn.close()
 
-    # Bake out flat HTML and .vcf to static directory
     try:
         bake_static_site()
         flash("Settings saved and static site baked successfully!", "success")
@@ -352,11 +499,9 @@ def save():
 
 if __name__ == "__main__":
     init_db()
-    # Initial compilation on startup to ensure public directory matches DB state
     try:
         bake_static_site()
     except Exception as e:
         print(f"[WARN] Initial bake failed: {e}")
 
-    # Bind strictly to 127.0.0.1 / internal interface
     app.run(host="127.0.0.1", port=5000, debug=False)
