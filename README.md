@@ -2,6 +2,22 @@
 
 Vibe-coded selfhosted Linktree alternative.
 
+## Development Server
+
+Admin site:
+
+```sh
+./venv/bin/flask run
+```
+
+Public site:
+
+```sh
+python3 -m http.server --bind 127.0.0.1 -d pub
+```
+
+Replace `pub` with the output directory.
+
 ## Deployment
 
 Simple manual deployment:
