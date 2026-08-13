@@ -1,5 +1,7 @@
 import os
+import re
 import sqlite3
+from urllib.parse import urlparse
 from flask import Flask, render_template, request, redirect, url_for, flash
 from flask_login import (
     LoginManager,
