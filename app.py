@@ -16,11 +16,20 @@ app.secret_key = os.environ.get(
     "FLASK_SECRET_KEY", "change-this-in-production-to-a-random-secret"
 )
 
+# Trust reverse proxy headers (e.g., Caddy setting X-Forwarded-Proto)
+app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_prefix=1)
+
+# Cookie Security Configuration
+COOKIE_SECURE = os.environ.get("COOKIE_SECURE", "true").lower() in ("true", "1", "yes")
+app.config.update(
+    SESSION_COOKIE_SECURE=COOKIE_SECURE,
+    SESSION_COOKIE_HTTPONLY=True,
+    SESSION_COOKIE_SAMESITE="Lax",
+)
+
 # --- Configuration (Overridable via Environment Variables) ---
 DB_PATH = os.environ.get("DB_PATH", "app.db")
-OUTPUT_DIR = os.path.abspath(
-    os.environ.get("OUTPUT_DIR", "/srv/www/example.com/@info")
-)
+OUTPUT_DIR = os.path.abspath(os.environ.get("OUTPUT_DIR", "/srv/www/example.com/@info"))
 
 # Initial superadmin deployment credentials
 DEPLOYMENT_SUPERADMIN_USER = os.environ.get("SUPERADMIN_USER", "admin")
@@ -161,6 +170,26 @@ def get_site_data():
     }
 
 
+def sanitize_slug(name: str) -> str:
+    """Sanitizes user input into a deterministic filename string."""
+    name = name.strip().lower()
+    name = re.sub(r"[^a-z0-9_\-]", "_", name)
+    return name or "contact"
+
+
+def normalize_url(url: str) -> str:
+    """Ensures external domains have https:// while preserving relative paths/schemes."""
+    url = url.strip()
+    if not url:
+        return ""
+    if url.startswith("/") or url.startswith("."):
+        return url
+    parsed = urlparse(url)
+    if not parsed.scheme:
+        return f"https://{url}"
+    return url
+
+
 # --- Static Compiler (Write-Only output) ---
 def generate_vcard_content(vcard):
     return (
@@ -176,18 +205,34 @@ def generate_vcard_content(vcard):
     )
 
 
+# --- Static Compiler ---
 def bake_static_site():
     data = get_site_data()
     vcard_dir = os.path.join(OUTPUT_DIR, "vcard")
     os.makedirs(vcard_dir, exist_ok=True)
 
-    # 1. Write the static vCard file
-    vcard_path = os.path.join(vcard_dir, "contact.vcf")
-    vcard_content = generate_vcard_content(data.get("vcard", {}))
+    vcard_info = data.get("vcard", {})
+    slug = sanitize_slug(vcard_info.get("slug", "contact"))
+
+    # 1. Write vCard using the user-specified deterministic slug
+    vcard_filename = f"{slug}.vcf"
+    vcard_path = os.path.join(vcard_dir, vcard_filename)
+
+    # Normalize URL field in vCard
+    vcard_info["url"] = normalize_url(vcard_info.get("url", ""))
+
+    vcard_content = generate_vcard_content(vcard_info)
     with open(vcard_path, "w", encoding="utf-8") as f:
         f.write(vcard_content)
 
-    # 2. Render and write index.html using relative paths
+    # 2. Pass relative vcard path to site context so template links properly
+    data["vcard_relative_path"] = f"./vcard/{vcard_filename}"
+
+    # Normalize external link URLs
+    for link in data.get("links", []):
+        link["url"] = normalize_url(link["url"])
+
+    # 3. Render index.html
     rendered_html = render_template("site_template.html", data=data)
     index_path = os.path.join(OUTPUT_DIR, "index.html")
     with open(index_path, "w", encoding="utf-8") as f:
@@ -246,6 +291,7 @@ def save():
     title = request.form.get("title", "")
     bio = request.form.get("bio", "")
 
+    vcard_slug = request.form.get("vcard_slug", "")
     vcard_fn = request.form.get("vcard_fn", "")
     vcard_org = request.form.get("vcard_org", "")
     vcard_title = request.form.get("vcard_title", "")
@@ -263,6 +309,7 @@ def save():
     config_updates = {
         "title": title,
         "bio": bio,
+        "vcard_slug": vcard_slug,
         "vcard_fn": vcard_fn,
         "vcard_org": vcard_org,
         "vcard_title": vcard_title,

@@ -103,6 +103,22 @@
         <textarea name="bio" rows="3">{{ data.bio }}</textarea>
       </div>
 
+      <div class="form-group">
+        <label for="vcard_slug">vCard Filename Slug</label>
+        <input
+          type="text"
+          id="vcard_slug"
+          name="vcard_slug"
+          value="{{ data.vcard.slug }}"
+          placeholder="e.g. contact or john-doe"
+          required
+        />
+        <small
+          >Generates <code>./vcard/&lt;slug&gt;.vcf</code>. Re-saving with the
+          same slug overwrites the previous file.</small
+        >
+      </div>
+
       <div class="card">
         <h3>vCard Details (Contact File)</h3>
         <label>Full Name</label>
