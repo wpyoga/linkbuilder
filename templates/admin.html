@@ -1,0 +1,150 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Linktree Builder Admin</title>
+    <style>
+      body {
+        font-family: system-ui, sans-serif;
+        max-width: 650px;
+        margin: 20px auto;
+        padding: 0 15px;
+        background: #f4f4f9;
+        color: #333;
+      }
+      .card {
+        background: #fff;
+        padding: 20px;
+        border-radius: 8px;
+        box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
+        margin-bottom: 20px;
+      }
+      label {
+        font-weight: bold;
+        display: block;
+        margin-top: 10px;
+      }
+      input[type="text"],
+      input[type="email"],
+      textarea {
+        width: 100%;
+        padding: 8px;
+        margin-top: 5px;
+        box-sizing: border-box;
+        border: 1px solid #ccc;
+        border-radius: 4px;
+      }
+      .link-row {
+        display: flex;
+        gap: 10px;
+        margin-top: 10px;
+      }
+      .link-row input {
+        flex: 1;
+      }
+      button {
+        background: #0066cc;
+        color: #fff;
+        border: none;
+        padding: 10px 15px;
+        border-radius: 4px;
+        cursor: pointer;
+        margin-top: 15px;
+      }
+      button.btn-add {
+        background: #28a745;
+        margin-top: 10px;
+      }
+      .alert {
+        padding: 10px;
+        border-radius: 4px;
+        margin-bottom: 15px;
+      }
+      .alert-success {
+        background: #d4edda;
+        color: #155724;
+      }
+      .alert-danger {
+        background: #f8d7da;
+        color: #721c24;
+      }
+    </style>
+  </head>
+  <body>
+    <h2>Linktree Site Admin</h2>
+
+    {% with messages = get_flashed_messages(with_categories=true) %} {% if
+    messages %} {% for category, message in messages %}
+    <div class="alert alert-{{ category }}">{{ message }}</div>
+    {% endfor %} {% endif %} {% endwith %}
+
+    <form action="/save" method="POST">
+      <div class="card">
+        <h3>General Info</h3>
+        <label>Page Title / Name</label>
+        <input type="text" name="title" value="{{ data.title }}" required />
+
+        <label>Bio / Description</label>
+        <textarea name="bio" rows="3">{{ data.bio }}</textarea>
+      </div>
+
+      <div class="card">
+        <h3>vCard Details (Contact File)</h3>
+        <label>Full Name</label>
+        <input type="text" name="vcard_fn" value="{{ data.vcard.fn }}" />
+        <label>Organization</label>
+        <input type="text" name="vcard_org" value="{{ data.vcard.org }}" />
+        <label>Job Title</label>
+        <input type="text" name="vcard_title" value="{{ data.vcard.title }}" />
+        <label>Email</label>
+        <input type="email" name="vcard_email" value="{{ data.vcard.email }}" />
+        <label>Phone Number</label>
+        <input type="text" name="vcard_phone" value="{{ data.vcard.phone }}" />
+        <label>Website URL</label>
+        <input type="text" name="vcard_url" value="{{ data.vcard.url }}" />
+      </div>
+
+      <div class="card">
+        <h3>Links</h3>
+        <div id="links-container">
+          {% for link in data.links %}
+          <div class="link-row">
+            <input
+              type="text"
+              name="link_label"
+              value="{{ link.label }}"
+              placeholder="Label (e.g. Website)"
+            />
+            <input
+              type="text"
+              name="link_url"
+              value="{{ link.url }}"
+              placeholder="URL (https://...)"
+            />
+          </div>
+          {% endfor %}
+        </div>
+        <button type="button" class="btn-add" onclick="addLinkRow()">
+          + Add Another Link
+        </button>
+      </div>
+
+      <button type="submit" style="font-size: 1.1em; width: 100%">
+        Save & Bake Static Site
+      </button>
+    </form>
+
+    <script>
+      function addLinkRow() {
+        const container = document.getElementById("links-container");
+        const div = document.createElement("div");
+        div.className = "link-row";
+        div.innerHTML = `
+                <input type="text" name="link_label" placeholder="Label">
+                <input type="text" name="link_url" placeholder="URL">
+            `;
+        container.appendChild(div);
+      }
+    </script>
+  </body>
+</html>
