@@ -64,6 +64,9 @@
       {% endif %}
 
       <form method="POST" action="/login">
+        {# CSRF token required by flask-wtf's CSRFProtect (enabled app-wide in app.py). #}
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
+
         <label>Username</label>
         <input type="text" name="username" required autofocus placeholder="Username" />
 

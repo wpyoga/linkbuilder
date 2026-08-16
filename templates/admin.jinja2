@@ -179,7 +179,19 @@
       {% endfor %}
     {% endif %}
 
-    <form action="/save" method="POST" enctype="multipart/form-data" id="admin-form">
+    <form action="/save" method="POST" enctype="multipart/form-data" id="admin-form" onsubmit="return serializeButtonsBeforeSubmit();">
+      {# CSRF token required by flask-wtf's CSRFProtect (enabled app-wide in app.py). #}
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
+
+      {#
+        The button list below is serialized into this single hidden field as a JSON array
+        right before submit (see serializeButtonsBeforeSubmit()), instead of posting a
+        separate btn_type[]/btn_color[]/link_label[]/link_url[]/vcard_*[] array per field.
+        Server-side, /save's validate_buttons_payload() parses and validates this field.
+        See app.py for why: parallel arrays correlated by index were fragile.
+      #}
+      <input type="hidden" name="buttons_json" id="buttons-json-field" value="" />
+
       <div class="card">
         <h3>General Info & Media</h3>
         <label>Page Title / Name</label>
@@ -209,7 +221,11 @@
         <h3>Page Buttons (Arrange & Order)</h3>
         <div id="buttons-container">
           {% for btn in data.buttons %}
-            <details class="button-block" open>
+            {# data-field-* attributes (not name=) are read by collectButtonsAsJson() at
+               submit time and packed into the single buttons_json hidden field -- see the
+               script block below. Nothing in this block is posted directly by the browser
+               except via that serialization step. #}
+            <details class="button-block" data-btn-type="{{ btn.type }}" open>
               <summary>
                 <div>
                   <span class="block-title">
@@ -224,41 +240,39 @@
                 </div>
               </summary>
               <div class="block-content">
-                <input type="hidden" name="btn_type" value="{{ btn.type }}" />
-
                 <div class="color-picker-wrapper">
                   <label style="margin:0;">Button Color:</label>
-                  <input type="color" name="btn_color" value="{{ btn.color or '#0066cc' }}" />
+                  <input type="color" data-field="color" value="{{ btn.color or '#0066cc' }}" />
                 </div>
 
                 {% if btn.type == 'link' %}
                   <label>Button Label</label>
-                  <input type="text" name="link_label" value="{{ btn.label }}" placeholder="e.g. Official Website" oninput="updateSummaryTitle(this)" required />
+                  <input type="text" data-field="label" value="{{ btn.label }}" placeholder="e.g. Official Website" oninput="updateSummaryTitle(this)" required />
                   <label>Target URL</label>
-                  <input type="text" name="link_url" value="{{ btn.url }}" placeholder="e.g. https://example.com" required />
+                  <input type="text" data-field="url" value="{{ btn.url }}" placeholder="e.g. https://example.com" required />
                 {% else %}
                   <label>Button Label on Public Page</label>
-                  <input type="text" name="vcard_button_label" value="{{ btn.button_label }}" placeholder="e.g. Save Contact Info" oninput="updateSummaryTitle(this)" required />
-                  
+                  <input type="text" data-field="button_label" value="{{ btn.button_label }}" placeholder="e.g. Save Contact Info" oninput="updateSummaryTitle(this)" required />
+
                   <label>vCard Filename Slug</label>
-                  <input type="text" name="vcard_slug" value="{{ btn.slug }}" placeholder="e.g. john_doe" oninput="updateSlugPreview(this)" required />
+                  <input type="text" data-field="slug" value="{{ btn.slug }}" placeholder="e.g. john_doe" oninput="updateSlugPreview(this)" required />
                   <small class="slug-preview">Generates <code>./vcard/{{ btn.slug or 'contact' }}.vcf</code></small>
 
                   <details class="nested-vcard-details">
                     <summary>Edit Contact Card Details (Name, Phone, Email)</summary>
                     <div style="padding: 10px 12px;">
                       <label>Full Name</label>
-                      <input type="text" name="vcard_fn" value="{{ btn.fn }}" placeholder="e.g. John Doe" />
+                      <input type="text" data-field="fn" value="{{ btn.fn }}" placeholder="e.g. John Doe" />
                       <label>Organization</label>
-                      <input type="text" name="vcard_org" value="{{ btn.org }}" placeholder="e.g. Example Inc." />
+                      <input type="text" data-field="org" value="{{ btn.org }}" placeholder="e.g. Example Inc." />
                       <label>Job Title</label>
-                      <input type="text" name="vcard_title" value="{{ btn.title }}" placeholder="e.g. Principal Engineer" />
+                      <input type="text" data-field="title" value="{{ btn.title }}" placeholder="e.g. Principal Engineer" />
                       <label>Email</label>
-                      <input type="email" name="vcard_email" value="{{ btn.email }}" placeholder="e.g. john@example.com" />
+                      <input type="email" data-field="email" value="{{ btn.email }}" placeholder="e.g. john@example.com" />
                       <label>Phone Number</label>
-                      <input type="text" name="vcard_phone" value="{{ btn.phone }}" placeholder="e.g. +1 555 019 2831" />
+                      <input type="text" data-field="phone" value="{{ btn.phone }}" placeholder="e.g. +1 555 019 2831" />
                       <label>Website URL</label>
-                      <input type="text" name="vcard_url" value="{{ btn.url }}" placeholder="e.g. https://example.com" />
+                      <input type="text" data-field="url" value="{{ btn.url }}" placeholder="e.g. https://example.com" />
                     </div>
                   </details>
                 {% endif %}
@@ -277,6 +291,37 @@
     </form>
 
     <script>
+      // Walk every .button-block currently in the DOM (in their current, possibly
+      // user-reordered, order) and build a plain JS array of button objects from their
+      // data-field="..." inputs. This runs once, right before submit, and the result is
+      // JSON-stringified into the single hidden #buttons-json-field input that actually
+      // gets posted to /save. This replaces the old approach of giving every input a
+      // name="..." attribute and letting the browser post several parallel arrays
+      // (btn_type[], link_label[], link_url[], ...) that the server had to re-correlate by
+      // index -- see app.py's validate_buttons_payload() docstring for why that was fragile.
+      function collectButtonsAsJson() {
+        const blocks = document.querySelectorAll("#buttons-container .button-block");
+        const buttons = [];
+        blocks.forEach((block) => {
+          const type = block.dataset.btnType;
+          const fields = {};
+          block.querySelectorAll("[data-field]").forEach((input) => {
+            fields[input.dataset.field] = input.value;
+          });
+          buttons.push(Object.assign({ type }, fields));
+        });
+        return JSON.stringify(buttons);
+      }
+
+      // Wired as the form's onsubmit handler. Populates the hidden JSON field just before
+      // the browser serializes the form, then allows the submit to proceed normally
+      // (returns true) so the multipart/form-data encoding still carries the file inputs
+      // (favicon/org_logo) alongside it.
+      function serializeButtonsBeforeSubmit() {
+        document.getElementById("buttons-json-field").value = collectButtonsAsJson();
+        return true;
+      }
+
       function updateSummaryTitle(inputEl) {
         const block = inputEl.closest('.button-block');
         const titleSpan = block.querySelector('.block-title');
@@ -313,6 +358,7 @@
         const container = document.getElementById("buttons-container");
         const block = document.createElement("details");
         block.className = "button-block";
+        block.dataset.btnType = "link";
         block.open = true;
         block.innerHTML = `
           <summary>
@@ -327,15 +373,14 @@
             </div>
           </summary>
           <div class="block-content">
-            <input type="hidden" name="btn_type" value="link">
             <div class="color-picker-wrapper">
               <label style="margin:0;">Button Color:</label>
-              <input type="color" name="btn_color" value="#0066cc">
+              <input type="color" data-field="color" value="#0066cc">
             </div>
             <label>Button Label</label>
-            <input type="text" name="link_label" placeholder="e.g. Official Website" oninput="updateSummaryTitle(this)" required>
+            <input type="text" data-field="label" placeholder="e.g. Official Website" oninput="updateSummaryTitle(this)" required>
             <label>Target URL</label>
-            <input type="text" name="link_url" placeholder="e.g. https://example.com" required>
+            <input type="text" data-field="url" placeholder="e.g. https://example.com" required>
           </div>
         `;
         container.appendChild(block);
@@ -345,6 +390,7 @@
         const container = document.getElementById("buttons-container");
         const block = document.createElement("details");
         block.className = "button-block";
+        block.dataset.btnType = "vcard";
         block.open = true;
         block.innerHTML = `
           <summary>
@@ -359,33 +405,32 @@
             </div>
           </summary>
           <div class="block-content">
-            <input type="hidden" name="btn_type" value="vcard">
             <div class="color-picker-wrapper">
               <label style="margin:0;">Button Color:</label>
-              <input type="color" name="btn_color" value="#0284c7">
+              <input type="color" data-field="color" value="#0284c7">
             </div>
             <label>Button Label on Public Page</label>
-            <input type="text" name="vcard_button_label" placeholder="e.g. Save Contact Info" oninput="updateSummaryTitle(this)" required>
-            
+            <input type="text" data-field="button_label" placeholder="e.g. Save Contact Info" oninput="updateSummaryTitle(this)" required>
+
             <label>vCard Filename Slug</label>
-            <input type="text" name="vcard_slug" placeholder="e.g. john_doe" oninput="updateSlugPreview(this)" required>
+            <input type="text" data-field="slug" placeholder="e.g. john_doe" oninput="updateSlugPreview(this)" required>
             <small class="slug-preview">Generates <code>./vcard/contact.vcf</code></small>
 
             <details class="nested-vcard-details" open>
               <summary>Edit Contact Card Details (Name, Phone, Email)</summary>
               <div style="padding: 10px 12px;">
                 <label>Full Name</label>
-                <input type="text" name="vcard_fn" placeholder="e.g. John Doe">
+                <input type="text" data-field="fn" placeholder="e.g. John Doe">
                 <label>Organization</label>
-                <input type="text" name="vcard_org" placeholder="e.g. Example Inc.">
+                <input type="text" data-field="org" placeholder="e.g. Example Inc.">
                 <label>Job Title</label>
-                <input type="text" name="vcard_title" placeholder="e.g. Principal Engineer">
+                <input type="text" data-field="title" placeholder="e.g. Principal Engineer">
                 <label>Email</label>
-                <input type="email" name="vcard_email" placeholder="e.g. john@example.com">
+                <input type="email" data-field="email" placeholder="e.g. john@example.com">
                 <label>Phone Number</label>
-                <input type="text" name="vcard_phone" placeholder="e.g. +1 555 019 2831">
+                <input type="text" data-field="phone" placeholder="e.g. +1 555 019 2831">
                 <label>Website URL</label>
-                <input type="text" name="vcard_url" placeholder="e.g. https://example.com">
+                <input type="text" data-field="url" placeholder="e.g. https://example.com">
               </div>
             </details>
           </div>

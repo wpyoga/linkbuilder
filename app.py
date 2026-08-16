@@ -1,8 +1,10 @@
-# Import standard library modules for OS path operations and file manipulation
+# Import standard library modules for OS path operations, file manipulation, and JSON handling
 import os
 import re
 import io
+import json
 import shutil
+import secrets
 import sqlite3
 from contextlib import contextmanager
 from urllib.parse import urlparse
@@ -15,18 +17,26 @@ from flask_login import (
     login_required,
     current_user,
 )
+from flask_wtf import CSRFProtect
 from werkzeug.security import generate_password_hash, check_password_hash
 from werkzeug.middleware.proxy_fix import ProxyFix
-from werkzeug.utils import secure_filename
 
-# Import PyFilesystem2 modules for abstracted filesystem directory operations
-from fs import open_fs
-from fs.errors import FSError
+# Pillow is used to verify that uploaded raster images are actually what their extension
+# claims (magic-byte / structural verification, not filename-extension trust).
+from PIL import Image, UnidentifiedImageError
+
+# defusedxml protects against XML attacks (XXE, billion-laughs, external entity expansion)
+# while we parse uploaded SVGs in order to sanitize them.
+import defusedxml.ElementTree as DefusedET
 
 # Initialize the main Flask application instance
 app = Flask(__name__)
 
-# Configure application secret key using environment variables or fall back to standard random bytes
+# Configure application secret key using environment variables or fall back to random bytes.
+# NOTE: falling back to os.urandom(24) means sessions do not survive a process restart when
+# FLASK_SECRET_KEY is unset. That's acceptable for the secret key (it only invalidates
+# sessions on restart), but see SUPERADMIN_PASSWORD below, which does NOT get the same
+# "safe to regenerate silently" treatment.
 app.secret_key = os.environ.get("FLASK_SECRET_KEY") or os.urandom(24)
 
 # Apply proxy fix middleware to handle HTTP headers correctly behind reverse proxies like Nginx
@@ -35,24 +45,51 @@ app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_prefix=1)
 # Evaluate security boolean from environment variables for cookie handling
 COOKIE_SECURE = os.environ.get("COOKIE_SECURE", "true").lower() in ("true", "1", "yes")
 
-# Apply Flask configuration parameters for session security and file size limits
+# Apply Flask configuration parameters for session security and file size limits.
+# TEMPLATES_AUTO_RELOAD is intentionally NOT set here: it defaults to Flask's DEBUG value,
+# which is what we want. Forcing it True unconditionally (as the previous version did) adds
+# a per-request filesystem stat() call for every template with no benefit outside development.
 app.config.update(
-    TEMPLATES_AUTO_RELOAD=True,
     SESSION_COOKIE_SECURE=COOKIE_SECURE,
     SESSION_COOKIE_HTTPONLY=True,
     SESSION_COOKIE_SAMESITE="Lax",
     MAX_CONTENT_LENGTH=16 * 1024 * 1024,
 )
 
-# Resolve default paths for the SQLite database and the static export destination directory
-DB_PATH = os.environ.get("DB_PATH", "app.db")
+# Enable CSRF protection for every state-changing view in this app. flask-wtf's CSRFProtect
+# hooks into Flask's request lifecycle and rejects any POST/PUT/PATCH/DELETE request that
+# doesn't carry a valid csrf_token matching the one issued in the session. Every <form> that
+# performs a mutation must therefore include {{ csrf_token() }} as a hidden field.
+#
+# Why this matters here specifically: SESSION_COOKIE_SAMESITE="Lax" is NOT sufficient CSRF
+# protection on its own. Lax blocks cross-site *fetch/XHR* POSTs, but it has known gaps
+# (e.g. Chrome's "Lax + POST" grace period allows top-level cross-site POST navigations for
+# cookies less than ~2 minutes old) and inconsistent enforcement across browsers/versions.
+# CSRFProtect closes that gap with an explicit, unguessable per-session token checked on
+# every mutating request -- currently /login and /save.
+csrf = CSRFProtect(app)
+
+# Resolve default paths for the SQLite database and the static export destination directory.
+# DB_PATH is made absolute immediately (not left as the raw env value / relative default)
+# because sqlite3.connect() resolves a relative path against the CURRENT PROCESS's working
+# directory at connect time. If `flask init-db` is run from one working directory and the
+# app is later started from a different one (a different terminal, an IDE launcher, a
+# systemd unit with its own WorkingDirectory, a Docker ENTRYPOINT with a different WORKDIR),
+# a relative DB_PATH silently resolves to two different files -- init-db populates one
+# (creating it if absent, since SQLite doesn't error on a missing file), and the running app
+# opens a fresh, empty one at a different path, surfacing as "no such table: users" with no
+# indication that the actual cause is a working-directory mismatch, not a schema bug.
+# Resolving to an absolute path once here, using this file's own location as the anchor for
+# the relative default, means both commands always agree on the same file regardless of CWD.
+DB_PATH = os.path.abspath(
+    os.environ.get("DB_PATH", os.path.join(os.path.dirname(os.path.abspath(__file__)), "app.db"))
+)
 OUTPUT_DIR = os.path.abspath(os.environ.get("OUTPUT_DIR", "/srv/www/example.com/@info"))
 
-# Define administrative credential defaults for initial database bootstrapping
+# Administrative bootstrap username. Unlike the password below, a predictable default
+# username is not a meaningful security weakness on its own (usernames aren't secret), so
+# it's fine to keep a static fallback here.
 DEPLOYMENT_SUPERADMIN_USER = os.environ.get("SUPERADMIN_USER") or "admin"
-DEPLOYMENT_SUPERADMIN_PASS = (
-    os.environ.get("SUPERADMIN_PASSWORD") or "SuperSecretPass123!"
-)
 
 # Instantiate and bind the login manager to handle user session lifecycle
 login_manager = LoginManager()
@@ -112,10 +149,22 @@ def get_db():
         conn.close()
 
 
-# Database initialization routine to set up tables, indexes, and default admin account
+# Database initialization routine to set up tables, indexes, and default admin account.
+#
+# SCHEMA NOTE: buttons are stored as a single JSON TEXT column (site_config 'buttons_json'
+# row) rather than as normalized `buttons` / `button_links` / `button_vcards` tables. This
+# is a deliberate simplification, not an oversight: every read in this app fetches the
+# entire button list at once (get_site_data), and every write replaces the entire button
+# list at once (save()). There is no code path that queries, filters, or updates a single
+# button in isolation, so the relational schema was paying JOIN/foreign-key overhead for a
+# query pattern the app never actually uses. A JSON blob is simpler to reason about here and
+# matches the real access pattern. The buttons list is still validated against an explicit
+# shape on every write (see validate_buttons_payload) since it now arrives directly from
+# client-controlled POST data instead of being assembled field-by-field server-side.
 def init_db():
-    # Ensure directory path for SQLite file exists prior to connection creation
-    os.makedirs(os.path.dirname(os.path.abspath(DB_PATH)), exist_ok=True)
+    # DB_PATH is already absolute (resolved at module load, see the DB_PATH assignment
+    # above) -- just ensure its parent directory exists.
+    os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
     with get_db() as db:
         # Create users table for administrative access control
         db.execute("""
@@ -126,7 +175,10 @@ def init_db():
             )
             """)
 
-        # Create site configuration table for system values and image blobs
+        # Create site configuration table for system values, the buttons JSON blob, and
+        # uploaded image blobs (favicon/logo bytes + resolved extension), all keyed by
+        # a short string key. See the SCHEMA NOTE above for why buttons live here as JSON
+        # rather than in their own relational tables.
         db.execute("""
             CREATE TABLE IF NOT EXISTS site_config (
                 key TEXT PRIMARY KEY,
@@ -135,62 +187,45 @@ def init_db():
             )
             """)
 
-        # Create main tracking table for link and vcard action buttons
-        db.execute("""
-            CREATE TABLE IF NOT EXISTS buttons (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                type TEXT NOT NULL,
-                position INTEGER DEFAULT 0,
-                color TEXT DEFAULT '#0066cc'
+        # Seed initial administrative user into the database if absent. If no password is
+        # provided via SUPERADMIN_PASSWORD, generate a random one and print it once so the
+        # operator can log in. We deliberately do NOT fall back to a static hardcoded
+        # password: a static default shipped in source is a real credential-stuffing /
+        # drive-by risk for anything that ends up reachable (misconfigured VPN, forgotten
+        # firewall rule, etc.), whereas a randomly generated one-time password only leaks if
+        # the operator fails to read their own deploy logs.
+        existing = db.execute(
+            "SELECT id FROM users WHERE username = ?", (DEPLOYMENT_SUPERADMIN_USER,)
+        ).fetchone()
+        if not existing:
+            password = os.environ.get("SUPERADMIN_PASSWORD")
+            generated = False
+            if not password:
+                # secrets.token_urlsafe gives a cryptographically random, URL-safe password.
+                # 18 bytes -> 24 base64 characters, well above typical brute-force concern
+                # for an interactively-typed admin password.
+                password = secrets.token_urlsafe(18)
+                generated = True
+
+            db.execute(
+                "INSERT INTO users (username, password_hash) VALUES (?, ?)",
+                (
+                    DEPLOYMENT_SUPERADMIN_USER,
+                    generate_password_hash(password, method="scrypt"),
+                ),
             )
-            """)
 
-        # Create child table storing URL link button metadata
-        db.execute("""
-            CREATE TABLE IF NOT EXISTS button_links (
-                button_id INTEGER PRIMARY KEY,
-                label TEXT NOT NULL,
-                url TEXT NOT NULL,
-                FOREIGN KEY (button_id) REFERENCES buttons(id) ON DELETE CASCADE
-            )
-            """)
-
-        # Create child table storing vCard contact download metadata
-        db.execute("""
-            CREATE TABLE IF NOT EXISTS button_vcards (
-                button_id INTEGER PRIMARY KEY,
-                button_label TEXT NOT NULL,
-                slug TEXT UNIQUE NOT NULL,
-                fn TEXT,
-                org TEXT,
-                title TEXT,
-                email TEXT,
-                phone TEXT,
-                url TEXT,
-                FOREIGN KEY (button_id) REFERENCES buttons(id) ON DELETE CASCADE
-            )
-            """)
-
-        # Optimization 1: Create explicit indexes for button positioning and slug lookups
-        db.execute(
-            "CREATE INDEX IF NOT EXISTS idx_buttons_position ON buttons(position, id);"
-        )
-        db.execute(
-            "CREATE INDEX IF NOT EXISTS idx_button_vcards_slug ON button_vcards(slug);"
-        )
-
-        # Seed initial administrative user into database if absent
-        db.execute(
-            """
-            INSERT INTO users (username, password_hash)
-            VALUES (?, ?)
-            ON CONFLICT(username) DO NOTHING
-            """,
-            (
-                DEPLOYMENT_SUPERADMIN_USER,
-                generate_password_hash(DEPLOYMENT_SUPERADMIN_PASS, method="scrypt"),
-            ),
-        )
+            if generated:
+                # Printed once, to stdout/deploy logs only -- never stored in the DB or
+                # written to a file on disk. The operator is expected to capture it from
+                # the init-db command's output. There is currently no in-app password
+                # rotation flow (out of scope for "simple"); to reset, delete the row from
+                # the users table and re-run init-db to regenerate it.
+                print("=" * 60)
+                print("Generated superadmin password (shown once, not stored anywhere):")
+                print(f"  username: {DEPLOYMENT_SUPERADMIN_USER}")
+                print(f"  password: {password}")
+                print("=" * 60)
 
 
 # Register CLI command for initializing database and triggering clean initial static bake
@@ -204,8 +239,7 @@ def init_db_command():
         app.logger.warning(f"Initial bake failed: {e}")
 
 
-# Helper function to query complete site state and button lists from SQLite storage
-# Optimization 2: Combined multiple isolated loop queries into continuous join operations to prevent N+1 overhead
+# Helper function to query complete site state from SQLite storage.
 def get_site_data():
     with get_db() as db:
         # Fetch configuration key-value mappings along with binary presence indicators
@@ -224,50 +258,17 @@ def get_site_data():
             if row["key"] == "org_logo_blob" and row["blob_value"]:
                 has_org_logo = True
 
-        # Fetch button entries with LEFT JOIN across child tables to retrieve metadata in a single query pass
-        query = """
-            SELECT 
-                b.id, b.type, b.color,
-                l.label AS link_label, l.url AS link_url,
-                v.button_label AS vcard_button_label, v.slug AS vcard_slug,
-                v.fn, v.org, v.title, v.email, v.phone, v.url AS vcard_url
-            FROM buttons b
-            LEFT JOIN button_links l ON b.id = l.button_id
-            LEFT JOIN button_vcards v ON b.id = v.button_id
-            ORDER BY b.position ASC, b.id ASC
-        """
-        buttons_rows = db.execute(query).fetchall()
-        buttons = []
-
-        # Parse unified join output directly into the structured list
-        for b in buttons_rows:
-            b_id, b_type, b_color = b["id"], b["type"], b["color"] or "#0066cc"
-            if b_type == "link" and b["link_label"] is not None:
-                buttons.append(
-                    {
-                        "id": b_id,
-                        "type": "link",
-                        "color": b_color,
-                        "label": b["link_label"],
-                        "url": b["link_url"],
-                    }
-                )
-            elif b_type == "vcard" and b["vcard_slug"] is not None:
-                buttons.append(
-                    {
-                        "id": b_id,
-                        "type": "vcard",
-                        "color": b_color,
-                        "button_label": b["vcard_button_label"],
-                        "slug": b["vcard_slug"],
-                        "fn": b["fn"],
-                        "org": b["org"],
-                        "title": b["title"],
-                        "email": b["email"],
-                        "phone": b["phone"],
-                        "url": b["vcard_url"],
-                    }
-                )
+        # Buttons are stored as a JSON-encoded list under the 'buttons_json' key. Fall back
+        # to an empty list for a freshly initialized site where nothing has been saved yet.
+        raw_buttons_json = config.get("buttons_json") or "[]"
+        try:
+            buttons = json.loads(raw_buttons_json)
+        except (TypeError, ValueError):
+            # Defensive fallback: if the stored JSON is ever corrupted, don't crash the
+            # entire admin page -- render an empty button list instead so the operator can
+            # still log in and fix things.
+            app.logger.error("Corrupt buttons_json in site_config; falling back to empty list.")
+            buttons = []
 
         # Resolve asset file extensions or apply sensible defaults
         fav_ext = config.get("favicon_ext", ".ico")
@@ -288,23 +289,43 @@ def get_site_data():
 
 # Sanitize slug input to guarantee URL-safe file paths for vCards
 def sanitize_slug(name: str) -> str:
-    name = name.strip().lower()
+    name = (name or "").strip().lower()
     name = re.sub(r"[^a-z0-9_\-]", "_", name)
     return name or "contact"
 
 
-# Normalize web URLs to enforce absolute scheme prefixes when missing
+# Schemes we allow a link/vcard URL to resolve to. This is a *scheme* allowlist, not a
+# domain allowlist -- it does not restrict which services can be linked to. WhatsApp
+# (https://wa.me/...), Telegram (https://t.me/...), LINE (https://line.me/...), Instagram
+# (https://instagram.com/...) and similar chat/social apps all use ordinary https:// URLs
+# and are completely unaffected by this check. What it blocks is schemes that execute code
+# or read local state instead of navigating to a resource: javascript:, data:, vbscript:,
+# file:, and anything else not explicitly listed.
+ALLOWED_URL_SCHEMES = {"http", "https", "mailto", "tel", "sms"}
+
+
+# Normalize web URLs to enforce absolute scheme prefixes when missing, then validate the
+# resulting scheme against ALLOWED_URL_SCHEMES. Returns "" (dropping the URL entirely) if
+# the scheme is not allowed, rather than letting an attacker- or admin-mistake-controlled
+# javascript:/data: URI pass straight through into the rendered <a href> on the public page.
 def normalize_url(url: str) -> str:
-    url = url.strip()
+    url = (url or "").strip()
     if not url:
         return ""
     if url.startswith("//"):
-        return f"https:{url}"
-    if url.startswith("/") or url.startswith("."):
+        url = f"https:{url}"
+    elif url.startswith("/") or url.startswith("."):
+        # Relative/local paths have no scheme to validate; allow them through unchanged.
         return url
-    parsed = urlparse(url)
-    if not parsed.scheme:
-        return f"https://{url}"
+    else:
+        parsed = urlparse(url)
+        if not parsed.scheme:
+            url = f"https://{url}"
+
+    scheme = urlparse(url).scheme.lower()
+    if scheme not in ALLOWED_URL_SCHEMES:
+        app.logger.warning(f"Rejected URL with disallowed scheme '{scheme}': {url!r}")
+        return ""
     return url
 
 
@@ -331,26 +352,270 @@ def generate_vcard_content(vcard: dict) -> str:
     )
 
 
-# Clean a target output directory safely using PyFilesystem2 abstractions.
-# PROCESS EXPLANATION:
-# 1. os.makedirs(directory, exist_ok=True) ensures the target directory exists on the native OS filesystem so open_fs() can acquire a valid handle.
-# 2. open_fs(directory) initializes an OSFS (OS Filesystem) context bounded to the specified path, providing explicit filesystem safety boundaries.
-# 3. output_fs.removetree("/") recursively purges all contained files, symlinks, and child subdirectories while preserving the top-level directory instance itself.
-# 4. FSError exceptions are trapped and logged to prevent filesystem-level unlinking lock errors from bubbling up to the WSGI application loop.
+# ---------------------------------------------------------------------------------------
+# Image upload validation
+# ---------------------------------------------------------------------------------------
+
+# Raster formats we accept for favicon/logo uploads, mapped to the extension we'll write to
+# disk. Keyed by Pillow's reported `Image.format` string, which reflects the file's actual
+# decoded structure -- not the filename the browser sent us. secure_filename() (used by the
+# original code) only protects against path traversal in the filename; it says nothing
+# about whether the bytes inside the file are actually an image of the claimed type.
+RASTER_FORMAT_EXTENSIONS = {
+    "PNG": ".png",
+    "JPEG": ".jpg",
+    "GIF": ".gif",
+    "WEBP": ".webp",
+    "ICO": ".ico",
+    "BMP": ".bmp",
+}
+
+# SVG elements that are never allowed to survive sanitization, regardless of namespace.
+# <script> is the direct code-execution vector; <foreignObject> can embed arbitrary
+# non-SVG markup (including HTML <script>) inside an SVG document, and <iframe> can load
+# an entirely separate origin's content -- both treated as equally disallowed.
+SVG_DISALLOWED_TAGS = {"script", "foreignObject", "iframe"}
+
+# Attributes stripped from every surviving SVG element: any event handler (onload, onclick,
+# onmouseover, ...) via the prefix check, plus href/xlink:href, which can be used to
+# reference and load external/remote content from within the SVG.
+SVG_DISALLOWED_ATTR_PREFIXES = ("on",)
+SVG_DISALLOWED_ATTRS = {"href", "xlink:href"}
+
+
+def validate_and_normalize_image(file_storage):
+    """
+    Validate an uploaded image file by inspecting its actual content rather than trusting
+    the client-supplied filename/extension. Returns (bytes, extension) on success, or
+    raises ValueError with a user-facing message on failure.
+
+    SVG is handled separately from raster formats because it's XML text, not a binary
+    format -- Pillow can't "decode" it to prove safety the way it can a PNG. Instead we
+    parse it with defusedxml (which blocks XXE / entity-expansion attacks during parsing
+    itself, before we even get to looking at tags) and then strip any element/attribute
+    capable of executing script or loading external content before re-serializing it.
+    """
+    raw_bytes = file_storage.read()
+    if not raw_bytes:
+        raise ValueError("Uploaded file is empty.")
+
+    # Sniff for SVG first: SVGs are plain text/XML, so raster format detection below
+    # wouldn't recognize them at all.
+    head = raw_bytes[:512].lstrip().lower()
+    looks_like_svg = head.startswith(b"<?xml") or b"<svg" in head
+
+    if looks_like_svg:
+        sanitized = sanitize_svg(raw_bytes)
+        return sanitized, ".svg"
+
+    # Otherwise, treat it as a raster image and let Pillow verify the structure.
+    try:
+        with Image.open(io.BytesIO(raw_bytes)) as img:
+            img.verify()  # Raises if the file is truncated/corrupt/not actually an image
+        # verify() invalidates the image object for further use, so re-open to read format.
+        with Image.open(io.BytesIO(raw_bytes)) as img:
+            fmt = img.format
+    except UnidentifiedImageError:
+        raise ValueError("File is not a recognized image format (PNG/JPEG/GIF/WEBP/ICO/BMP/SVG).")
+    except Exception as e:
+        raise ValueError(f"Uploaded image failed validation: {e}")
+
+    ext = RASTER_FORMAT_EXTENSIONS.get(fmt)
+    if not ext:
+        raise ValueError(f"Image format '{fmt}' is not supported.")
+
+    return raw_bytes, ext
+
+
+def sanitize_svg(raw_bytes):
+    """
+    Parse an uploaded SVG with defusedxml (blocking XXE/entity-bomb attacks at parse time),
+    strip disallowed elements and attributes, and re-serialize. Raises ValueError if the
+    input doesn't parse as XML at all.
+
+    This is an allowlist-by-removal approach: rather than trying to enumerate every
+    dangerous SVG construct (blocklists for XML/SVG attack surface are routinely
+    incomplete -- there have been repeated bypasses found for various SVG sanitizers over
+    the years), we remove the small set of constructs that are unambiguously
+    script-or-external-load vectors (script/foreignObject/iframe tags, event handler
+    attributes, href/xlink:href references) and leave ordinary drawing markup (paths,
+    shapes, gradients, etc.) untouched.
+    """
+    try:
+        root = DefusedET.fromstring(raw_bytes)
+    except Exception as e:
+        raise ValueError(f"File is not valid SVG/XML: {e}")
+
+    def strip_attrs(el):
+        # Clean el's OWN attributes. Handles the case where the disallowed attribute is on
+        # the element itself (e.g. the root <svg onload="..."> element), not just on some
+        # descendant -- a bug in an earlier version of this function only ever checked
+        # children's attributes and never the element passed in, which meant a top-level
+        # <svg onload="..."> attribute survived sanitization untouched.
+        for attr_name in list(el.attrib.keys()):
+            local_attr = attr_name.split("}")[-1]
+            if (
+                local_attr.lower().startswith(SVG_DISALLOWED_ATTR_PREFIXES)
+                or local_attr.lower() in SVG_DISALLOWED_ATTRS
+            ):
+                del el.attrib[attr_name]
+
+    def strip(el):
+        strip_attrs(el)
+        for child in list(el):
+            # child.tag may be namespaced like '{http://www.w3.org/2000/svg}script';
+            # compare against the local (post-namespace) name only.
+            local_tag = child.tag.split("}")[-1] if isinstance(child.tag, str) else ""
+            if local_tag in SVG_DISALLOWED_TAGS:
+                el.remove(child)
+                continue
+            strip(child)
+
+    strip(root)
+
+    # Re-serialize using the standard library's ElementTree -- parsing (the actually
+    # dangerous part, vulnerable to XXE) already happened above via defusedxml. Registering
+    # the SVG namespace as the default ("") before serializing avoids ElementTree emitting
+    # auto-generated ns0: prefixes on every tag (<ns0:svg>, <ns0:circle>, ...) -- purely
+    # cosmetic/compatibility, not a security concern, but it keeps the sanitized output
+    # closer to ordinary unprefixed SVG that every renderer expects.
+    import xml.etree.ElementTree as ET
+    ET.register_namespace("", "http://www.w3.org/2000/svg")
+    return ET.tostring(root, encoding="utf-8")
+
+
+def store_uploaded_image(db, file_field_name, blob_key, ext_key):
+    """
+    Shared logic for handling the favicon/org_logo upload fields in /save. Validates the
+    image, then stores its bytes and resolved extension in site_config. No-op if the field
+    is absent or empty (i.e. the operator didn't choose a new file this submission). Raises
+    ValueError (caught by the /save route) if validation fails, so the whole /save
+    transaction rolls back rather than partially applying.
+    """
+    if file_field_name not in request.files:
+        return
+    file = request.files[file_field_name]
+    if not file or file.filename == "":
+        return
+
+    image_bytes, ext = validate_and_normalize_image(file)
+
+    db.execute(
+        "INSERT OR REPLACE INTO site_config (key, value, blob_value) VALUES (?, 'present', ?)",
+        (blob_key, sqlite3.Binary(image_bytes)),
+    )
+    db.execute(
+        "INSERT OR REPLACE INTO site_config (key, value) VALUES (?, ?)",
+        (ext_key, ext),
+    )
+
+
+# ---------------------------------------------------------------------------------------
+# Buttons payload validation (replaces the old parallel-getlist()-array parsing)
+# ---------------------------------------------------------------------------------------
+
+def validate_buttons_payload(raw_json: str):
+    """
+    Parse and validate the 'buttons_json' field submitted by the admin form. Replaces the
+    previous approach of reading several parallel form-list arrays (btn_type[], btn_color[],
+    link_label[], link_url[], vcard_slug[], ...) and correlating them positionally by index.
+    That approach was fragile: if the arrays ever arrived with mismatched lengths or subtly
+    out of order (a UI bug, a browser extension reordering fields, a hand-crafted request),
+    buttons could get silently corrupted -- e.g. one button's URL attached to a different
+    button's label -- with no error raised anywhere.
+
+    Posting a single JSON array instead means each button is a self-contained object, so
+    there's no positional correlation to get wrong. We still don't trust it blindly, since
+    it's client-controlled data: every button is validated against an explicit shape below,
+    and the whole payload is rejected (with a clear error message) if anything doesn't
+    match, rather than silently coercing or dropping bad entries.
+
+    Returns (buttons, error_message). On success error_message is None. On failure buttons
+    is None and error_message describes what was wrong, for use in a flash message.
+    """
+    try:
+        parsed = json.loads(raw_json)
+    except (TypeError, ValueError):
+        return None, "Buttons payload was not valid JSON."
+
+    if not isinstance(parsed, list):
+        return None, "Buttons payload must be a JSON array."
+
+    validated = []
+    seen_slugs = set()
+
+    for i, btn in enumerate(parsed):
+        if not isinstance(btn, dict):
+            return None, f"Button #{i + 1} is not a JSON object."
+
+        btn_type = btn.get("type")
+        color = btn.get("color") or "#0066cc"
+        if not re.fullmatch(r"#[0-9a-fA-F]{6}", color):
+            color = "#0066cc"
+
+        if btn_type == "link":
+            label = str(btn.get("label", "")).strip()
+            url = str(btn.get("url", "")).strip()
+            if not label:
+                return None, f"Link button #{i + 1} is missing a label."
+            if not url:
+                return None, f"Link button #{i + 1} is missing a URL."
+            validated.append({
+                "type": "link",
+                "color": color,
+                "label": label,
+                "url": url,
+            })
+
+        elif btn_type == "vcard":
+            button_label = str(btn.get("button_label", "")).strip() or "Save Contact"
+            slug = sanitize_slug(str(btn.get("slug", "")))
+            if slug in seen_slugs:
+                return None, f"Duplicate vCard slug '{slug}' -- slugs must be unique."
+            seen_slugs.add(slug)
+            validated.append({
+                "type": "vcard",
+                "color": color,
+                "button_label": button_label,
+                "slug": slug,
+                "fn": str(btn.get("fn", "")).strip(),
+                "org": str(btn.get("org", "")).strip(),
+                "title": str(btn.get("title", "")).strip(),
+                "email": str(btn.get("email", "")).strip(),
+                "phone": str(btn.get("phone", "")).strip(),
+                "url": str(btn.get("url", "")).strip(),
+            })
+
+        else:
+            return None, f"Button #{i + 1} has an unrecognized type: {btn_type!r}"
+
+    return validated, None
+
+
+# ---------------------------------------------------------------------------------------
+# Static site generation
+# ---------------------------------------------------------------------------------------
+
+# Clear everything INSIDE the output directory, without removing the directory itself.
+# OUTPUT_DIR is likely a Docker bind-mount or named-volume mount point in deployment (per
+# the docstring's separation of admin app vs. static-site hosting). shutil.rmtree(directory)
+# would delete that mount point's inode and require os.makedirs to recreate it -- inside a
+# container, the recreated directory is just a fresh directory in the container's own
+# filesystem, no longer the mounted host path, which either breaks the mount or only
+# "works" by accident depending on the container runtime's bind-mount semantics. Removing
+# and recreating each entry INSIDE the directory instead leaves the mount point itself
+# untouched, which is safe under both plain-filesystem and mounted-volume deployments.
 def clean_output_directory(directory: str):
     os.makedirs(directory, exist_ok=True)
-    try:
-        with open_fs(directory) as output_fs:
-            output_fs.removetree("/")
-    except FSError as e:
-        app.logger.error(f"Failed to clear output directory via PyFilesystem2: {e}")
-        raise
+    for entry in os.scandir(directory):
+        if entry.is_dir(follow_symlinks=False):
+            shutil.rmtree(entry.path)
+        else:
+            os.remove(entry.path)
 
 
-# Core site generation routine that purges target path and writes generated static assets
-# Optimization 4: Streamlined buffer writes via io.BytesIO and io.StringIO with shutil.copyfileobj to optimize disk I/O
+# Core site generation routine: clears the output directory and writes a fresh static site.
 def bake_static_site():
-    # Purge all existing artifacts and recreate the root target directory using the utility wrapper
     clean_output_directory(OUTPUT_DIR)
 
     favicon_filename = None
@@ -368,11 +633,8 @@ def bake_static_site():
             ).fetchone()
             ext = ext_row["value"] if ext_row and ext_row["value"] else ".ico"
             favicon_filename = f"favicon{ext}"
-
-            # Write binary stream directly using buffer memory transfer
             with open(os.path.join(OUTPUT_DIR, favicon_filename), "wb") as f_out:
-                buf = io.BytesIO(favicon_row["blob_value"])
-                shutil.copyfileobj(buf, f_out)
+                f_out.write(favicon_row["blob_value"])
 
         # Export binary logo image from site config if present in database
         logo_row = db.execute(
@@ -385,11 +647,8 @@ def bake_static_site():
             ).fetchone()
             ext = ext_row["value"] if ext_row and ext_row["value"] else ".png"
             logo_filename = f"logo{ext}"
-
-            # Write raw binary image payload to target using buffered streaming
             with open(os.path.join(OUTPUT_DIR, logo_filename), "wb") as f_out:
-                buf = io.BytesIO(logo_row["blob_value"])
-                shutil.copyfileobj(buf, f_out)
+                f_out.write(logo_row["blob_value"])
 
     # Retrieve current structured state from SQLite backend
     data = get_site_data()
@@ -422,11 +681,9 @@ def bake_static_site():
                 "url": normalize_url(btn.get("url", "")),
             }
 
-            # Generate individual vCard payload stream and write using buffer pipe
             vcard_content = generate_vcard_content(vcard_data)
             with open(vcard_path, "w", encoding="utf-8") as f_out:
-                buf = io.StringIO(vcard_content)
-                shutil.copyfileobj(buf, f_out)
+                f_out.write(vcard_content)
 
             processed_buttons.append(
                 {
@@ -447,15 +704,23 @@ def bake_static_site():
         "buttons": processed_buttons,
     }
 
-    # Render Jinja template into output HTML string and write index file via memory buffer
+    # Render Jinja template into output HTML string and write index file
     rendered_html = render_template("site_template.jinja2", data=render_context)
     index_path = os.path.join(OUTPUT_DIR, "index.html")
     with open(index_path, "w", encoding="utf-8") as f_out:
-        buf = io.StringIO(rendered_html)
-        shutil.copyfileobj(buf, f_out)
+        f_out.write(rendered_html)
 
 
-# Handle login form displays and authentication post requests
+# ---------------------------------------------------------------------------------------
+# Routes
+# ---------------------------------------------------------------------------------------
+
+# Handle login form displays and authentication post requests. This form's CSRF token is
+# enforced by CSRFProtect like every other mutating route in the app -- see login.jinja2
+# for the hidden {{ csrf_token() }} field. (CSRF on a login form primarily protects against
+# login-CSRF -- an attacker forcing a victim's browser to authenticate as an
+# attacker-controlled account -- rather than session hijacking, but it's cheap to include
+# uniformly rather than special-casing "this POST route doesn't need it.")
 @app.route("/login", methods=["GET", "POST"])
 def login():
     if current_user.is_authenticated:
@@ -503,93 +768,47 @@ def admin():
     return render_template("admin.jinja2", data=data, user=current_user)
 
 
-# Handle configuration modifications, file uploads, and trigger dynamic bakes
-# Optimization 5: Enforced complete single-transaction boundary guarantees across multi-table writes
+# Handle configuration modifications, file uploads, and trigger dynamic bakes.
+#
+# Buttons now arrive as a single JSON-encoded field ('buttons_json') built client-side by
+# admin.jinja2's JS from the button-block DOM, rather than as several parallel form-list
+# arrays correlated by index. See validate_buttons_payload() for why. CSRF-protected like
+# every mutating route here, via the {{ csrf_token() }} hidden field in admin.jinja2's form.
 @app.route("/save", methods=["POST"])
 @login_required
 def save():
     title = request.form.get("title", "")
     bio = request.form.get("bio", "")
     theme = request.form.get("theme", "auto")
+    raw_buttons_json = request.form.get("buttons_json", "[]")
 
-    types = request.form.getlist("btn_type")
-    colors = request.form.getlist("btn_color")
+    parsed_buttons, error = validate_buttons_payload(raw_buttons_json)
 
-    link_labels = request.form.getlist("link_label")
-    link_urls = request.form.getlist("link_url")
-
-    vcard_button_labels = request.form.getlist("vcard_button_label")
-    vcard_slugs = request.form.getlist("vcard_slug")
-    vcard_fns = request.form.getlist("vcard_fn")
-    vcard_orgs = request.form.getlist("vcard_org")
-    vcard_titles = request.form.getlist("vcard_title")
-    vcard_emails = request.form.getlist("vcard_email")
-    vcard_phones = request.form.getlist("vcard_phone")
-    vcard_urls = request.form.getlist("vcard_url")
-
-    parsed_buttons = []
-    sanitized_slugs = []
-
-    l_idx = 0
-    v_idx = 0
-
-    # Parse dynamic list structures from POST payload
-    for idx, b_type in enumerate(types):
-        b_color = colors[idx] if idx < len(colors) else "#0066cc"
-        if b_type == "link":
-            parsed_buttons.append(
-                {
-                    "type": "link",
-                    "color": b_color,
-                    "label": link_labels[l_idx] if l_idx < len(link_labels) else "",
-                    "url": link_urls[l_idx] if l_idx < len(link_urls) else "",
-                }
-            )
-            l_idx += 1
-        elif b_type == "vcard":
-            raw_slug = vcard_slugs[v_idx] if v_idx < len(vcard_slugs) else "contact"
-            clean_slug = sanitize_slug(raw_slug)
-            sanitized_slugs.append(clean_slug)
-
-            parsed_buttons.append(
-                {
-                    "type": "vcard",
-                    "color": b_color,
-                    "button_label": (
-                        vcard_button_labels[v_idx]
-                        if v_idx < len(vcard_button_labels)
-                        else "Save Contact"
-                    ),
-                    "slug": clean_slug,
-                    "fn": vcard_fns[v_idx] if v_idx < len(vcard_fns) else "",
-                    "org": vcard_orgs[v_idx] if v_idx < len(vcard_orgs) else "",
-                    "title": vcard_titles[v_idx] if v_idx < len(vcard_titles) else "",
-                    "email": vcard_emails[v_idx] if v_idx < len(vcard_emails) else "",
-                    "phone": vcard_phones[v_idx] if v_idx < len(vcard_phones) else "",
-                    "url": vcard_urls[v_idx] if v_idx < len(vcard_urls) else "",
-                }
-            )
-            v_idx += 1
+    # Build a best-effort "posted state" for re-rendering the form on validation failure,
+    # so the operator doesn't lose their in-progress edits. If the JSON itself didn't even
+    # parse, fall back to an empty button list rather than crashing on the re-render.
+    try:
+        posted_buttons_for_render = json.loads(raw_buttons_json) if not error else []
+    except (TypeError, ValueError):
+        posted_buttons_for_render = []
 
     posted_state = {
         "title": title,
         "bio": bio,
         "theme": theme,
-        "buttons": parsed_buttons,
+        "buttons": posted_buttons_for_render,
     }
 
-    # Validate slug uniqueness across all submitted vCard items
-    if len(sanitized_slugs) != len(set(sanitized_slugs)):
-        flash("Error: Duplicate vCard slugs detected.", "danger")
+    if error:
+        flash(f"Error: {error}", "danger")
         return (
             render_template("admin.jinja2", data=posted_state, user=current_user),
             400,
         )
 
     try:
-        # Atomic database transaction block spanning state modifications and button table updates
+        # Atomic database transaction block spanning config, image, and button updates.
         with get_db() as db:
-            # Update base site variables in configuration table
             db.execute(
                 "INSERT OR REPLACE INTO site_config (key, value) VALUES ('title', ?)",
                 (title,),
@@ -602,82 +821,31 @@ def save():
                 "INSERT OR REPLACE INTO site_config (key, value) VALUES ('theme', ?)",
                 (theme,),
             )
+            db.execute(
+                "INSERT OR REPLACE INTO site_config (key, value) VALUES ('buttons_json', ?)",
+                (json.dumps(parsed_buttons),),
+            )
 
-            # Store uploaded binary favicon stream if present in upload form
-            if "favicon" in request.files:
-                file = request.files["favicon"]
-                if file and file.filename != "":
-                    safe_fname = secure_filename(file.filename)
-                    if safe_fname:
-                        _, ext = os.path.splitext(safe_fname)
-                        ext = ext.lower() or ".ico"
-                        blob_bytes = file.read()
-                        db.execute(
-                            "INSERT OR REPLACE INTO site_config (key, value, blob_value) VALUES ('favicon_blob', 'present', ?)",
-                            (sqlite3.Binary(blob_bytes),),
-                        )
-                        db.execute(
-                            "INSERT OR REPLACE INTO site_config (key, value) VALUES ('favicon_ext', ?)",
-                            (ext,),
-                        )
+            # store_uploaded_image validates image content (magic bytes for raster formats,
+            # parsed + sanitized for SVG) before writing anything -- see its docstring. A
+            # ValueError here aborts the whole transaction (get_db's except-block rolls
+            # back everything above too), so a bad image upload never partially applies
+            # alongside other changes.
+            store_uploaded_image(db, "favicon", "favicon_blob", "favicon_ext")
+            store_uploaded_image(db, "org_logo", "org_logo_blob", "org_logo_ext")
 
-            # Store uploaded binary organization logo stream if present in form
-            if "org_logo" in request.files:
-                file = request.files["org_logo"]
-                if file and file.filename != "":
-                    safe_fname = secure_filename(file.filename)
-                    if safe_fname:
-                        _, ext = os.path.splitext(safe_fname)
-                        ext = ext.lower() or ".png"
-                        blob_bytes = file.read()
-                        db.execute(
-                            "INSERT OR REPLACE INTO site_config (key, value, blob_value) VALUES ('org_logo_blob', 'present', ?)",
-                            (sqlite3.Binary(blob_bytes),),
-                        )
-                        db.execute(
-                            "INSERT OR REPLACE INTO site_config (key, value) VALUES ('org_logo_ext', ?)",
-                            (ext,),
-                        )
-
-            # Clear button relational tables atomically
-            db.execute("DELETE FROM button_links")
-            db.execute("DELETE FROM button_vcards")
-            db.execute("DELETE FROM buttons")
-
-            # Insert updated button structures and related detail records within active transaction
-            for position, btn in enumerate(parsed_buttons, start=1):
-                db.execute(
-                    "INSERT INTO buttons (type, position, color) VALUES (?, ?, ?)",
-                    (btn["type"], position, btn["color"]),
-                )
-                btn_id = db.lastrowid
-
-                if btn["type"] == "link":
-                    db.execute(
-                        "INSERT INTO button_links (button_id, label, url) VALUES (?, ?, ?)",
-                        (btn_id, btn["label"], btn["url"]),
-                    )
-                elif btn["type"] == "vcard":
-                    db.execute(
-                        """
-                        INSERT INTO button_vcards (button_id, button_label, slug, fn, org, title, email, phone, url)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                        """,
-                        (
-                            btn_id,
-                            btn["button_label"],
-                            btn["slug"],
-                            btn["fn"],
-                            btn["org"],
-                            btn["title"],
-                            btn["email"],
-                            btn["phone"],
-                            btn["url"],
-                        ),
-                    )
-
+    except ValueError as e:
+        # Raised by store_uploaded_image on invalid/unrecognized image content.
+        flash(f"Image upload error: {e}", "danger")
+        return (
+            render_template("admin.jinja2", data=posted_state, user=current_user),
+            400,
+        )
     except Exception as e:
-        flash(f"Database error during save: {str(e)}", "danger")
+        # Log the real exception server-side; show the admin a generic message rather than
+        # raw exception text (which could include SQL fragments or internal paths).
+        app.logger.error(f"Database error during save: {e}")
+        flash("A database error occurred while saving. Check the server log for details.", "danger")
         return (
             render_template("admin.jinja2", data=posted_state, user=current_user),
             500,
@@ -688,7 +856,8 @@ def save():
         bake_static_site()
         flash("Settings saved and static site baked successfully!", "success")
     except Exception as e:
-        flash(f"Database saved, but error baking static site: {str(e)}", "danger")
+        app.logger.error(f"Error baking static site: {e}")
+        flash("Settings were saved, but baking the static site failed. Check the server log.", "danger")
 
     return redirect(url_for("admin"))
 
