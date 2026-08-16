@@ -14,6 +14,7 @@ from flask_login import (
 )
 from werkzeug.security import generate_password_hash, check_password_hash
 from werkzeug.middleware.proxy_fix import ProxyFix
+from werkzeug.serving import is_running_from_reloader
 
 app = Flask(__name__)
 
@@ -32,11 +33,10 @@ app.config.update(
     MAX_CONTENT_LENGTH=16 * 1024 * 1024,  # 16MB file upload limit
 )
 
-
 DB_PATH = os.environ.get("DB_PATH", "app.db")
 OUTPUT_DIR = os.path.abspath(os.environ.get("OUTPUT_DIR", "/srv/www/example.com/@info"))
 
-DEPLOYMENT_SUPERADMIN_USER = os.environ.get("SUPERADMIN_USER", "admin")
+DEPLOYMENT_SUPERADMIN_USER = os.environ.get("SUPERADMIN_USER") or "admin"
 # Fallback to default password if environment variable is missing or empty
 DEPLOYMENT_SUPERADMIN_PASS = (
     os.environ.get("SUPERADMIN_PASSWORD") or "SuperSecretPass123!"
@@ -90,7 +90,6 @@ def get_db():
         conn.close()  # whatever happens, close the connection
 
 
-@app.before_request
 def init_app_data():
     print("init_app_data")
     init_db()
@@ -633,6 +632,10 @@ def save():
 
     return redirect(url_for("admin"))
 
+
+if not app.debug or is_running_from_reloader():
+    with app.app_context():
+        init_app_data()
 
 if __name__ == "__main__":
     app.run(host="127.0.0.1", port=5000, debug=False)
