@@ -19,28 +19,23 @@ from werkzeug.utils import secure_filename
 app = Flask(__name__)
 
 # SECURITY: Secret key configuration
-# Set FLASK_SECRET_KEY in production via environment variable.
-# Fallback generates a strong key per process restart (will invalidate sessions across restarts).
 app.secret_key = os.environ.get("FLASK_SECRET_KEY") or os.urandom(24)
 
-# Trust reverse proxy headers (e.g., Nginx, Caddy, Cloudflare)
+# Trust reverse proxy headers
 app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_prefix=1)
 
-# Cookie security settings driven by environment variable or fallback to production defaults
 COOKIE_SECURE = os.environ.get("COOKIE_SECURE", "true").lower() in ("true", "1", "yes")
 app.config.update(
     TEMPLATES_AUTO_RELOAD=True,
     SESSION_COOKIE_SECURE=COOKIE_SECURE,
     SESSION_COOKIE_HTTPONLY=True,
     SESSION_COOKIE_SAMESITE="Lax",
-    MAX_CONTENT_LENGTH=16 * 1024 * 1024,  # Limit file uploads to 16MB max payload
+    MAX_CONTENT_LENGTH=16 * 1024 * 1024,
 )
 
-# File paths and base configuration
 DB_PATH = os.environ.get("DB_PATH", "app.db")
 OUTPUT_DIR = os.path.abspath(os.environ.get("OUTPUT_DIR", "/srv/www/example.com/@info"))
 
-# Administrative defaults
 DEPLOYMENT_SUPERADMIN_USER = os.environ.get("SUPERADMIN_USER") or "admin"
 DEPLOYMENT_SUPERADMIN_PASS = (
     os.environ.get("SUPERADMIN_PASSWORD") or "SuperSecretPass123!"
@@ -76,7 +71,6 @@ def load_user(user_id):
 @contextmanager
 def get_db():
     conn = sqlite3.connect(DB_PATH)
-    # Enable foreign key support explicitly for every connection
     conn.execute("PRAGMA foreign_keys = ON;")
     conn.row_factory = sqlite3.Row
     cursor = conn.cursor()
@@ -91,17 +85,7 @@ def get_db():
         conn.close()
 
 
-def init_app_data():
-    init_db()
-    try:
-        bake_static_site()
-    except Exception as e:
-        app.logger.warning(f"Initial bake failed: {e}")
-
-
 def init_db():
-    """Idempotent schema creation and initial seeding."""
-    # Ensure database path exists
     os.makedirs(os.path.dirname(os.path.abspath(DB_PATH)), exist_ok=True)
     with get_db() as db:
         db.execute("""
@@ -153,7 +137,6 @@ def init_db():
             )
             """)
 
-        # Insert default superadmin user if not existing
         db.execute(
             """
             INSERT INTO users (username, password_hash)
@@ -166,17 +149,15 @@ def init_db():
             ),
         )
 
-        # Seed initial default settings if empty
-        db.execute("SELECT COUNT(*) FROM site_config WHERE key = 'theme'")
-        if not db.fetchone()[0]:
-            db.execute("INSERT INTO site_config (key, value) VALUES ('theme', 'auto')")
-
 
 @app.cli.command("init-db")
 def init_db_command():
-    """CLI command to safely initialize database and bake site during deployment."""
-    init_app_data()
-    print("Database schema initialized and initial static bake complete.")
+    init_db()
+    try:
+        bake_static_site()
+        print("Database schema initialized and initial static bake complete.")
+    except Exception as e:
+        app.logger.warning(f"Initial bake failed: {e}")
 
 
 def get_site_data():
@@ -238,27 +219,28 @@ def get_site_data():
                         }
                     )
 
+        fav_ext = config.get("favicon_ext", ".ico")
+        logo_ext = config.get("org_logo_ext", ".png")
+
         return {
             "title": config.get("title", ""),
             "bio": config.get("bio", ""),
             "theme": config.get("theme", "auto"),
             "has_favicon": has_favicon,
             "has_org_logo": has_org_logo,
-            "favicon_filename": config.get("favicon_filename", "favicon.ico"),
-            "org_logo_filename": config.get("org_logo_filename", "logo.png"),
+            "favicon_filename": f"favicon{fav_ext}",
+            "org_logo_filename": f"logo{logo_ext}",
             "buttons": buttons,
         }
 
 
 def sanitize_slug(name: str) -> str:
-    """Sanitize URL slugs by reducing to lowercase alphanumerics, dashes, and underscores."""
     name = name.strip().lower()
     name = re.sub(r"[^a-z0-9_\-]", "_", name)
     return name or "contact"
 
 
 def normalize_url(url: str) -> str:
-    """Ensure URLs have standard HTTPS scheme if omitted, avoiding protocol-relative vectors."""
     url = url.strip()
     if not url:
         return ""
@@ -273,7 +255,6 @@ def normalize_url(url: str) -> str:
 
 
 def clean_vcard_field(val: str) -> str:
-    """Sanitize vCard text values against field injection and character breaking."""
     if not val:
         return ""
     val = val.replace("\r", "").replace("\n", " ")
@@ -281,7 +262,6 @@ def clean_vcard_field(val: str) -> str:
 
 
 def generate_vcard_content(vcard: dict) -> str:
-    """Construct a RFC-compliant vCard 3.0 string."""
     return (
         "BEGIN:VCARD\n"
         "VERSION:3.0\n"
@@ -295,37 +275,54 @@ def generate_vcard_content(vcard: dict) -> str:
     )
 
 
-def bake_static_site():
-    """Generates the static site files and writes them directly to the target output directory."""
-    os.makedirs(OUTPUT_DIR, exist_ok=True)
-    with get_db() as db:
-        # Export favicon blob if available
-        favicon_row = db.execute(
-            "SELECT value, blob_value FROM site_config WHERE key = 'favicon_blob'"
-        ).fetchone()
-        favicon_filename = "favicon.ico"
-        if favicon_row and favicon_row["blob_value"]:
-            fn_row = db.execute(
-                "SELECT value FROM site_config WHERE key = 'favicon_filename'"
-            ).fetchone()
-            if fn_row and fn_row["value"]:
-                favicon_filename = secure_filename(fn_row["value"]) or "favicon.ico"
+def purge_stale_assets(directory: str, prefix: str):
+    """Purge stale extension variants from destination directory prior to writing."""
+    if not os.path.exists(directory):
+        return
+    for filename in os.listdir(directory):
+        if filename.startswith(f"{prefix}."):
+            try:
+                os.remove(os.path.join(directory, filename))
+            except OSError:
+                pass
 
+
+def bake_static_site():
+    os.makedirs(OUTPUT_DIR, exist_ok=True)
+
+    favicon_filename = None
+    logo_filename = None
+
+    with get_db() as db:
+        # Export favicon
+        favicon_row = db.execute(
+            "SELECT blob_value FROM site_config WHERE key = 'favicon_blob'"
+        ).fetchone()
+
+        if favicon_row and favicon_row["blob_value"]:
+            ext_row = db.execute(
+                "SELECT value FROM site_config WHERE key = 'favicon_ext'"
+            ).fetchone()
+            ext = ext_row["value"] if ext_row and ext_row["value"] else ".ico"
+            favicon_filename = f"favicon{ext}"
+
+            purge_stale_assets(OUTPUT_DIR, "favicon")
             with open(os.path.join(OUTPUT_DIR, favicon_filename), "wb") as f:
                 f.write(favicon_row["blob_value"])
 
-        # Export organization logo blob if available
+        # Export organization logo
         logo_row = db.execute(
-            "SELECT value, blob_value FROM site_config WHERE key = 'org_logo_blob'"
+            "SELECT blob_value FROM site_config WHERE key = 'org_logo_blob'"
         ).fetchone()
-        logo_filename = None
-        if logo_row and logo_row["blob_value"]:
-            fn_row = db.execute(
-                "SELECT value FROM site_config WHERE key = 'org_logo_filename'"
-            ).fetchone()
-            raw_filename = fn_row["value"] if fn_row and fn_row["value"] else "logo.png"
-            logo_filename = secure_filename(raw_filename) or "logo.png"
 
+        if logo_row and logo_row["blob_value"]:
+            ext_row = db.execute(
+                "SELECT value FROM site_config WHERE key = 'org_logo_ext'"
+            ).fetchone()
+            ext = ext_row["value"] if ext_row and ext_row["value"] else ".png"
+            logo_filename = f"logo{ext}"
+
+            purge_stale_assets(OUTPUT_DIR, "logo")
             with open(os.path.join(OUTPUT_DIR, logo_filename), "wb") as f:
                 f.write(logo_row["blob_value"])
 
@@ -374,14 +371,11 @@ def bake_static_site():
         "title": data["title"],
         "bio": data["bio"],
         "theme": data.get("theme", "auto"),
-        "favicon_filename": (
-            favicon_filename if favicon_row and favicon_row["blob_value"] else None
-        ),
+        "favicon_filename": favicon_filename,
         "org_logo_filename": logo_filename,
         "buttons": processed_buttons,
     }
 
-    # Render static HTML file using Jinja template
     rendered_html = render_template("site_template.jinja2", data=render_context)
     index_path = os.path.join(OUTPUT_DIR, "index.html")
     with open(index_path, "w", encoding="utf-8") as f:
@@ -504,7 +498,6 @@ def save():
         "buttons": parsed_buttons,
     }
 
-    # Reject payload if duplicate vcard slugs are submitted
     if len(sanitized_slugs) != len(set(sanitized_slugs)):
         flash("Error: Duplicate vCard slugs detected.", "danger")
         return (
@@ -514,7 +507,6 @@ def save():
 
     try:
         with get_db() as db:
-            # Context manager handles connection commit and transaction boundaries implicitly
             db.execute(
                 "INSERT OR REPLACE INTO site_config (key, value) VALUES ('title', ?)",
                 (title,),
@@ -528,41 +520,43 @@ def save():
                 (theme,),
             )
 
-            # File upload handling for favicon
+            # Process Favicon
             if "favicon" in request.files:
                 file = request.files["favicon"]
                 if file and file.filename != "":
                     safe_fname = secure_filename(file.filename)
                     if safe_fname:
+                        _, ext = os.path.splitext(safe_fname)
+                        ext = ext.lower() or ".ico"
                         blob_bytes = file.read()
-                        _, extension = os.path.splitext(safe_fname)
                         db.execute(
                             "INSERT OR REPLACE INTO site_config (key, value, blob_value) VALUES ('favicon_blob', 'present', ?)",
                             (sqlite3.Binary(blob_bytes),),
                         )
                         db.execute(
-                            "INSERT OR REPLACE INTO site_config (key, value) VALUES ('favicon_filename', ?)",
-                            ("favicon" + extension,),
+                            "INSERT OR REPLACE INTO site_config (key, value) VALUES ('favicon_ext', ?)",
+                            (ext,),
                         )
 
-            # File upload handling for organization logo
+            # Process Org Logo
             if "org_logo" in request.files:
                 file = request.files["org_logo"]
                 if file and file.filename != "":
                     safe_fname = secure_filename(file.filename)
                     if safe_fname:
+                        _, ext = os.path.splitext(safe_fname)
+                        ext = ext.lower() or ".png"
                         blob_bytes = file.read()
-                        _, extension = os.path.splitext(safe_fname)
                         db.execute(
                             "INSERT OR REPLACE INTO site_config (key, value, blob_value) VALUES ('org_logo_blob', 'present', ?)",
                             (sqlite3.Binary(blob_bytes),),
                         )
                         db.execute(
-                            "INSERT OR REPLACE INTO site_config (key, value) VALUES ('org_logo_filename', ?)",
-                            ("logo" + extension,),
+                            "INSERT OR REPLACE INTO site_config (key, value) VALUES ('org_logo_ext', ?)",
+                            (ext,),
                         )
 
-            # Clear and rebuild button ordering structure
+            # Atomic button state replacement
             db.execute("DELETE FROM button_links")
             db.execute("DELETE FROM button_vcards")
             db.execute("DELETE FROM buttons")
