@@ -1,7 +1,6 @@
 # Import standard library modules for OS path operations and file manipulation
 import os
 import re
-import shutil
 import sqlite3
 from contextlib import contextmanager
 from urllib.parse import urlparse
@@ -17,6 +16,10 @@ from flask_login import (
 from werkzeug.security import generate_password_hash, check_password_hash
 from werkzeug.middleware.proxy_fix import ProxyFix
 from werkzeug.utils import secure_filename
+
+# Import PyFilesystem2 modules for abstracted filesystem directory operations
+from fs import open_fs
+from fs.errors import FSError
 
 # Initialize the main Flask application instance
 app = Flask(__name__)
@@ -317,14 +320,20 @@ def generate_vcard_content(vcard: dict) -> str:
     )
 
 
-# Clean a directory using shutil.rmtree and os.makedirs.
+# Clean a target output directory safely using PyFilesystem2 abstractions.
 # PROCESS EXPLANATION:
-# 1. shutil.rmtree removes the entire directory tree in a single fast, recursive operation.
-# 2. ignore_errors=True prevents exceptions if the directory does not exist or has permission locks.
-# 3. os.makedirs immediately recreates the empty root directory so output files can be written.
+# 1. os.makedirs(directory, exist_ok=True) ensures the target directory exists on the native OS filesystem so open_fs() can acquire a valid handle.
+# 2. open_fs(directory) initializes an OSFS (OS Filesystem) context bounded to the specified path, providing explicit filesystem safety boundaries.
+# 3. output_fs.removetree("/") recursively purges all contained files, symlinks, and child subdirectories while preserving the top-level directory instance itself.
+# 4. FSError exceptions are trapped and logged to prevent filesystem-level unlinking lock errors from bubbling up to the WSGI application loop.
 def clean_output_directory(directory: str):
-    shutil.rmtree(directory, ignore_errors=True)
     os.makedirs(directory, exist_ok=True)
+    try:
+        with open_fs(directory) as output_fs:
+            output_fs.removetree("/")
+    except FSError as e:
+        app.logger.error(f"Failed to clear output directory via PyFilesystem2: {e}")
+        raise
 
 
 # Core site generation routine that purges target path and writes generated static assets
