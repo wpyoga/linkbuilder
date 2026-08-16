@@ -1,12 +1,18 @@
-version: '3.8'
-
 services:
   app:
-    build: .
+    build:
+      context: ..
+      dockerfile: deployment/Dockerfile
+#    user: "${UID}:${GID}"
     environment:
-      - DB_PATH=/data/app.db
-      - OUTPUT_DIR=/site
+      - DB_PATH=/app/data/app.db
+      - OUTPUT_DIR=/app/pub
       - SUPERADMIN_PASSWORD=${SUPERADMIN_PASSWORD}
     volumes:
-      - db_data:/data
-      - static_site:/site
+      - db_data:/app/data
+      - ./pub:/app/pub
+    ports:
+      - 5000:8000
+
+volumes:
+  db_data:
