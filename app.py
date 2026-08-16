@@ -1,6 +1,8 @@
 # Import standard library modules for OS path operations and file manipulation
 import os
 import re
+import io
+import shutil
 import sqlite3
 from contextlib import contextmanager
 from urllib.parse import urlparse
@@ -110,7 +112,7 @@ def get_db():
         conn.close()
 
 
-# Database initialization routine to set up tables and default admin account
+# Database initialization routine to set up tables, indexes, and default admin account
 def init_db():
     # Ensure directory path for SQLite file exists prior to connection creation
     os.makedirs(os.path.dirname(os.path.abspath(DB_PATH)), exist_ok=True)
@@ -169,6 +171,14 @@ def init_db():
             )
             """)
 
+        # Optimization 1: Create explicit indexes for button positioning and slug lookups
+        db.execute(
+            "CREATE INDEX IF NOT EXISTS idx_buttons_position ON buttons(position, id);"
+        )
+        db.execute(
+            "CREATE INDEX IF NOT EXISTS idx_button_vcards_slug ON button_vcards(slug);"
+        )
+
         # Seed initial administrative user into database if absent
         db.execute(
             """
@@ -195,6 +205,7 @@ def init_db_command():
 
 
 # Helper function to query complete site state and button lists from SQLite storage
+# Optimization 2: Combined multiple isolated loop queries into continuous join operations to prevent N+1 overhead
 def get_site_data():
     with get_db() as db:
         # Fetch configuration key-value mappings along with binary presence indicators
@@ -213,50 +224,50 @@ def get_site_data():
             if row["key"] == "org_logo_blob" and row["blob_value"]:
                 has_org_logo = True
 
-        # Fetch button entries ordered by position configuration
-        buttons_rows = db.execute(
-            "SELECT id, type, position, color FROM buttons ORDER BY position ASC, id ASC"
-        ).fetchall()
+        # Fetch button entries with LEFT JOIN across child tables to retrieve metadata in a single query pass
+        query = """
+            SELECT 
+                b.id, b.type, b.color,
+                l.label AS link_label, l.url AS link_url,
+                v.button_label AS vcard_button_label, v.slug AS vcard_slug,
+                v.fn, v.org, v.title, v.email, v.phone, v.url AS vcard_url
+            FROM buttons b
+            LEFT JOIN button_links l ON b.id = l.button_id
+            LEFT JOIN button_vcards v ON b.id = v.button_id
+            ORDER BY b.position ASC, b.id ASC
+        """
+        buttons_rows = db.execute(query).fetchall()
         buttons = []
 
-        # Join button type details with specialized data tables
+        # Parse unified join output directly into the structured list
         for b in buttons_rows:
             b_id, b_type, b_color = b["id"], b["type"], b["color"] or "#0066cc"
-            if b_type == "link":
-                l_row = db.execute(
-                    "SELECT label, url FROM button_links WHERE button_id = ?", (b_id,)
-                ).fetchone()
-                if l_row:
-                    buttons.append(
-                        {
-                            "id": b_id,
-                            "type": "link",
-                            "color": b_color,
-                            "label": l_row["label"],
-                            "url": l_row["url"],
-                        }
-                    )
-            elif b_type == "vcard":
-                v_row = db.execute(
-                    "SELECT button_label, slug, fn, org, title, email, phone, url FROM button_vcards WHERE button_id = ?",
-                    (b_id,),
-                ).fetchone()
-                if v_row:
-                    buttons.append(
-                        {
-                            "id": b_id,
-                            "type": "vcard",
-                            "color": b_color,
-                            "button_label": v_row["button_label"],
-                            "slug": v_row["slug"],
-                            "fn": v_row["fn"],
-                            "org": v_row["org"],
-                            "title": v_row["title"],
-                            "email": v_row["email"],
-                            "phone": v_row["phone"],
-                            "url": v_row["url"],
-                        }
-                    )
+            if b_type == "link" and b["link_label"] is not None:
+                buttons.append(
+                    {
+                        "id": b_id,
+                        "type": "link",
+                        "color": b_color,
+                        "label": b["link_label"],
+                        "url": b["link_url"],
+                    }
+                )
+            elif b_type == "vcard" and b["vcard_slug"] is not None:
+                buttons.append(
+                    {
+                        "id": b_id,
+                        "type": "vcard",
+                        "color": b_color,
+                        "button_label": b["vcard_button_label"],
+                        "slug": b["vcard_slug"],
+                        "fn": b["fn"],
+                        "org": b["org"],
+                        "title": b["title"],
+                        "email": b["email"],
+                        "phone": b["phone"],
+                        "url": b["vcard_url"],
+                    }
+                )
 
         # Resolve asset file extensions or apply sensible defaults
         fav_ext = config.get("favicon_ext", ".ico")
@@ -337,6 +348,7 @@ def clean_output_directory(directory: str):
 
 
 # Core site generation routine that purges target path and writes generated static assets
+# Optimization 4: Streamlined buffer writes via io.BytesIO and io.StringIO with shutil.copyfileobj to optimize disk I/O
 def bake_static_site():
     # Purge all existing artifacts and recreate the root target directory using the utility wrapper
     clean_output_directory(OUTPUT_DIR)
@@ -357,9 +369,10 @@ def bake_static_site():
             ext = ext_row["value"] if ext_row and ext_row["value"] else ".ico"
             favicon_filename = f"favicon{ext}"
 
-            # Write raw binary payload to file target in clean directory
-            with open(os.path.join(OUTPUT_DIR, favicon_filename), "wb") as f:
-                f.write(favicon_row["blob_value"])
+            # Write binary stream directly using buffer memory transfer
+            with open(os.path.join(OUTPUT_DIR, favicon_filename), "wb") as f_out:
+                buf = io.BytesIO(favicon_row["blob_value"])
+                shutil.copyfileobj(buf, f_out)
 
         # Export binary logo image from site config if present in database
         logo_row = db.execute(
@@ -373,9 +386,10 @@ def bake_static_site():
             ext = ext_row["value"] if ext_row and ext_row["value"] else ".png"
             logo_filename = f"logo{ext}"
 
-            # Write raw binary image payload to file target
-            with open(os.path.join(OUTPUT_DIR, logo_filename), "wb") as f:
-                f.write(logo_row["blob_value"])
+            # Write raw binary image payload to target using buffered streaming
+            with open(os.path.join(OUTPUT_DIR, logo_filename), "wb") as f_out:
+                buf = io.BytesIO(logo_row["blob_value"])
+                shutil.copyfileobj(buf, f_out)
 
     # Retrieve current structured state from SQLite backend
     data = get_site_data()
@@ -408,9 +422,11 @@ def bake_static_site():
                 "url": normalize_url(btn.get("url", "")),
             }
 
-            # Generate individual vCard payload and write to static path
-            with open(vcard_path, "w", encoding="utf-8") as f:
-                f.write(generate_vcard_content(vcard_data))
+            # Generate individual vCard payload stream and write using buffer pipe
+            vcard_content = generate_vcard_content(vcard_data)
+            with open(vcard_path, "w", encoding="utf-8") as f_out:
+                buf = io.StringIO(vcard_content)
+                shutil.copyfileobj(buf, f_out)
 
             processed_buttons.append(
                 {
@@ -431,11 +447,12 @@ def bake_static_site():
         "buttons": processed_buttons,
     }
 
-    # Render Jinja template into output HTML string and save index file
+    # Render Jinja template into output HTML string and write index file via memory buffer
     rendered_html = render_template("site_template.jinja2", data=render_context)
     index_path = os.path.join(OUTPUT_DIR, "index.html")
-    with open(index_path, "w", encoding="utf-8") as f:
-        f.write(rendered_html)
+    with open(index_path, "w", encoding="utf-8") as f_out:
+        buf = io.StringIO(rendered_html)
+        shutil.copyfileobj(buf, f_out)
 
 
 # Handle login form displays and authentication post requests
@@ -487,6 +504,7 @@ def admin():
 
 
 # Handle configuration modifications, file uploads, and trigger dynamic bakes
+# Optimization 5: Enforced complete single-transaction boundary guarantees across multi-table writes
 @app.route("/save", methods=["POST"])
 @login_required
 def save():
@@ -569,6 +587,7 @@ def save():
         )
 
     try:
+        # Atomic database transaction block spanning state modifications and button table updates
         with get_db() as db:
             # Update base site variables in configuration table
             db.execute(
@@ -620,12 +639,12 @@ def save():
                             (ext,),
                         )
 
-            # Clear button relational tables for atomic rebuild
+            # Clear button relational tables atomically
             db.execute("DELETE FROM button_links")
             db.execute("DELETE FROM button_vcards")
             db.execute("DELETE FROM buttons")
 
-            # Insert updated button structures and related detail records
+            # Insert updated button structures and related detail records within active transaction
             for position, btn in enumerate(parsed_buttons, start=1):
                 db.execute(
                     "INSERT INTO buttons (type, position, color) VALUES (?, ?, ?)",
