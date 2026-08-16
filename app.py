@@ -1,5 +1,7 @@
+# Import standard library modules for OS path operations and file manipulation
 import os
 import re
+import shutil
 import sqlite3
 from contextlib import contextmanager
 from urllib.parse import urlparse
@@ -16,15 +18,19 @@ from werkzeug.security import generate_password_hash, check_password_hash
 from werkzeug.middleware.proxy_fix import ProxyFix
 from werkzeug.utils import secure_filename
 
+# Initialize the main Flask application instance
 app = Flask(__name__)
 
-# SECURITY: Secret key configuration
+# Configure application secret key using environment variables or fall back to standard random bytes
 app.secret_key = os.environ.get("FLASK_SECRET_KEY") or os.urandom(24)
 
-# Trust reverse proxy headers
+# Apply proxy fix middleware to handle HTTP headers correctly behind reverse proxies like Nginx
 app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_prefix=1)
 
+# Evaluate security boolean from environment variables for cookie handling
 COOKIE_SECURE = os.environ.get("COOKIE_SECURE", "true").lower() in ("true", "1", "yes")
+
+# Apply Flask configuration parameters for session security and file size limits
 app.config.update(
     TEMPLATES_AUTO_RELOAD=True,
     SESSION_COOKIE_SECURE=COOKIE_SECURE,
@@ -33,32 +39,40 @@ app.config.update(
     MAX_CONTENT_LENGTH=16 * 1024 * 1024,
 )
 
+# Resolve default paths for the SQLite database and the static export destination directory
 DB_PATH = os.environ.get("DB_PATH", "app.db")
 OUTPUT_DIR = os.path.abspath(os.environ.get("OUTPUT_DIR", "/srv/www/example.com/@info"))
 
+# Define administrative credential defaults for initial database bootstrapping
 DEPLOYMENT_SUPERADMIN_USER = os.environ.get("SUPERADMIN_USER") or "admin"
 DEPLOYMENT_SUPERADMIN_PASS = (
     os.environ.get("SUPERADMIN_PASSWORD") or "SuperSecretPass123!"
 )
 
+# Instantiate and bind the login manager to handle user session lifecycle
 login_manager = LoginManager()
 login_manager.init_app(app)
 login_manager.login_view = "login"
 
 
+# Define the user model class extending UserMixin for compatibility with Flask-Login
 class User(UserMixin):
+    # Initialize the user instance with primary ID, username, and password hash
     def __init__(self, id, username, password_hash):
         self.id = id
         self.username = username
         self.password_hash = password_hash
 
 
+# Register user loader callback function for retrieving session users by database primary key
 @login_manager.user_loader
 def load_user(user_id):
+    # Retrieve user credentials from the database within context safety
     with get_db() as db:
         user_row = db.execute(
             "SELECT id, username, password_hash FROM users WHERE id = ?", (user_id,)
         ).fetchone()
+        # Instantiate user object if corresponding row exists in the database
         if user_row:
             return User(
                 id=user_row["id"],
@@ -68,26 +82,37 @@ def load_user(user_id):
     return None
 
 
+# Context manager wrapper around SQLite database connection lifetime
 @contextmanager
 def get_db():
+    # Establish connection to SQLite database file
     conn = sqlite3.connect(DB_PATH)
+    # Enforce foreign key constraints inside SQLite session
     conn.execute("PRAGMA foreign_keys = ON;")
+    # Set row factory to dictionary-like access for query outputs
     conn.row_factory = sqlite3.Row
     cursor = conn.cursor()
     try:
+        # Yield cursor for transaction processing within caller block
         yield cursor
+        # Commit modifications if transaction finishes with no exceptions
         conn.commit()
     except Exception:
+        # Roll back active transaction state if any exception occurs
         conn.rollback()
         raise
     finally:
+        # Guarantee closure of cursor and database connection on exit
         cursor.close()
         conn.close()
 
 
+# Database initialization routine to set up tables and default admin account
 def init_db():
+    # Ensure directory path for SQLite file exists prior to connection creation
     os.makedirs(os.path.dirname(os.path.abspath(DB_PATH)), exist_ok=True)
     with get_db() as db:
+        # Create users table for administrative access control
         db.execute("""
             CREATE TABLE IF NOT EXISTS users (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -96,6 +121,7 @@ def init_db():
             )
             """)
 
+        # Create site configuration table for system values and image blobs
         db.execute("""
             CREATE TABLE IF NOT EXISTS site_config (
                 key TEXT PRIMARY KEY,
@@ -104,6 +130,7 @@ def init_db():
             )
             """)
 
+        # Create main tracking table for link and vcard action buttons
         db.execute("""
             CREATE TABLE IF NOT EXISTS buttons (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -113,6 +140,7 @@ def init_db():
             )
             """)
 
+        # Create child table storing URL link button metadata
         db.execute("""
             CREATE TABLE IF NOT EXISTS button_links (
                 button_id INTEGER PRIMARY KEY,
@@ -122,6 +150,7 @@ def init_db():
             )
             """)
 
+        # Create child table storing vCard contact download metadata
         db.execute("""
             CREATE TABLE IF NOT EXISTS button_vcards (
                 button_id INTEGER PRIMARY KEY,
@@ -137,6 +166,7 @@ def init_db():
             )
             """)
 
+        # Seed initial administrative user into database if absent
         db.execute(
             """
             INSERT INTO users (username, password_hash)
@@ -150,6 +180,7 @@ def init_db():
         )
 
 
+# Register CLI command for initializing database and triggering clean initial static bake
 @app.cli.command("init-db")
 def init_db_command():
     init_db()
@@ -160,8 +191,10 @@ def init_db_command():
         app.logger.warning(f"Initial bake failed: {e}")
 
 
+# Helper function to query complete site state and button lists from SQLite storage
 def get_site_data():
     with get_db() as db:
+        # Fetch configuration key-value mappings along with binary presence indicators
         config_rows = db.execute(
             "SELECT key, value, blob_value FROM site_config"
         ).fetchall()
@@ -169,6 +202,7 @@ def get_site_data():
         has_favicon = False
         has_org_logo = False
 
+        # Parse key-value results into dictionary structures
         for row in config_rows:
             config[row["key"]] = row["value"]
             if row["key"] == "favicon_blob" and row["blob_value"]:
@@ -176,11 +210,13 @@ def get_site_data():
             if row["key"] == "org_logo_blob" and row["blob_value"]:
                 has_org_logo = True
 
+        # Fetch button entries ordered by position configuration
         buttons_rows = db.execute(
             "SELECT id, type, position, color FROM buttons ORDER BY position ASC, id ASC"
         ).fetchall()
         buttons = []
 
+        # Join button type details with specialized data tables
         for b in buttons_rows:
             b_id, b_type, b_color = b["id"], b["type"], b["color"] or "#0066cc"
             if b_type == "link":
@@ -219,9 +255,11 @@ def get_site_data():
                         }
                     )
 
+        # Resolve asset file extensions or apply sensible defaults
         fav_ext = config.get("favicon_ext", ".ico")
         logo_ext = config.get("org_logo_ext", ".png")
 
+        # Return standardized structured data dictionary for view models and renders
         return {
             "title": config.get("title", ""),
             "bio": config.get("bio", ""),
@@ -234,12 +272,14 @@ def get_site_data():
         }
 
 
+# Sanitize slug input to guarantee URL-safe file paths for vCards
 def sanitize_slug(name: str) -> str:
     name = name.strip().lower()
     name = re.sub(r"[^a-z0-9_\-]", "_", name)
     return name or "contact"
 
 
+# Normalize web URLs to enforce absolute scheme prefixes when missing
 def normalize_url(url: str) -> str:
     url = url.strip()
     if not url:
@@ -254,6 +294,7 @@ def normalize_url(url: str) -> str:
     return url
 
 
+# Escape critical syntax delimiters inside text fields for vCard output format
 def clean_vcard_field(val: str) -> str:
     if not val:
         return ""
@@ -261,6 +302,7 @@ def clean_vcard_field(val: str) -> str:
     return val.replace("\\", "\\\\").replace(";", "\\;").replace(",", "\\,")
 
 
+# Format dictionary payload into a RFC 2426 compliant vCard string stream
 def generate_vcard_content(vcard: dict) -> str:
     return (
         "BEGIN:VCARD\n"
@@ -275,26 +317,26 @@ def generate_vcard_content(vcard: dict) -> str:
     )
 
 
-def purge_stale_assets(directory: str, prefix: str):
-    """Purge stale extension variants from destination directory prior to writing."""
-    if not os.path.exists(directory):
-        return
-    for filename in os.listdir(directory):
-        if filename.startswith(f"{prefix}."):
-            try:
-                os.remove(os.path.join(directory, filename))
-            except OSError:
-                pass
+# Clean a directory using shutil.rmtree and os.makedirs.
+# PROCESS EXPLANATION:
+# 1. shutil.rmtree removes the entire directory tree in a single fast, recursive operation.
+# 2. ignore_errors=True prevents exceptions if the directory does not exist or has permission locks.
+# 3. os.makedirs immediately recreates the empty root directory so output files can be written.
+def clean_output_directory(directory: str):
+    shutil.rmtree(directory, ignore_errors=True)
+    os.makedirs(directory, exist_ok=True)
 
 
+# Core site generation routine that purges target path and writes generated static assets
 def bake_static_site():
-    os.makedirs(OUTPUT_DIR, exist_ok=True)
+    # Purge all existing artifacts and recreate the root target directory using the utility wrapper
+    clean_output_directory(OUTPUT_DIR)
 
     favicon_filename = None
     logo_filename = None
 
     with get_db() as db:
-        # Export favicon
+        # Export binary favicon from site config if present in database
         favicon_row = db.execute(
             "SELECT blob_value FROM site_config WHERE key = 'favicon_blob'"
         ).fetchone()
@@ -306,11 +348,11 @@ def bake_static_site():
             ext = ext_row["value"] if ext_row and ext_row["value"] else ".ico"
             favicon_filename = f"favicon{ext}"
 
-            purge_stale_assets(OUTPUT_DIR, "favicon")
+            # Write raw binary payload to file target in clean directory
             with open(os.path.join(OUTPUT_DIR, favicon_filename), "wb") as f:
                 f.write(favicon_row["blob_value"])
 
-        # Export organization logo
+        # Export binary logo image from site config if present in database
         logo_row = db.execute(
             "SELECT blob_value FROM site_config WHERE key = 'org_logo_blob'"
         ).fetchone()
@@ -322,15 +364,17 @@ def bake_static_site():
             ext = ext_row["value"] if ext_row and ext_row["value"] else ".png"
             logo_filename = f"logo{ext}"
 
-            purge_stale_assets(OUTPUT_DIR, "logo")
+            # Write raw binary image payload to file target
             with open(os.path.join(OUTPUT_DIR, logo_filename), "wb") as f:
                 f.write(logo_row["blob_value"])
 
+    # Retrieve current structured state from SQLite backend
     data = get_site_data()
     vcard_dir = os.path.join(OUTPUT_DIR, "vcard")
     os.makedirs(vcard_dir, exist_ok=True)
 
     processed_buttons = []
+    # Process configuration buttons and compile individual vCard files
     for btn in data.get("buttons", []):
         if btn["type"] == "link":
             processed_buttons.append(
@@ -355,6 +399,7 @@ def bake_static_site():
                 "url": normalize_url(btn.get("url", "")),
             }
 
+            # Generate individual vCard payload and write to static path
             with open(vcard_path, "w", encoding="utf-8") as f:
                 f.write(generate_vcard_content(vcard_data))
 
@@ -367,6 +412,7 @@ def bake_static_site():
                 }
             )
 
+    # Compile context object for Jinja2 template engine execution
     render_context = {
         "title": data["title"],
         "bio": data["bio"],
@@ -376,12 +422,14 @@ def bake_static_site():
         "buttons": processed_buttons,
     }
 
+    # Render Jinja template into output HTML string and save index file
     rendered_html = render_template("site_template.jinja2", data=render_context)
     index_path = os.path.join(OUTPUT_DIR, "index.html")
     with open(index_path, "w", encoding="utf-8") as f:
         f.write(rendered_html)
 
 
+# Handle login form displays and authentication post requests
 @app.route("/login", methods=["GET", "POST"])
 def login():
     if current_user.is_authenticated:
@@ -397,6 +445,7 @@ def login():
                 (username,),
             ).fetchone()
 
+        # Verify hashed password string against user submission
         if user_row and check_password_hash(user_row["password_hash"], password):
             user = User(
                 id=user_row["id"],
@@ -411,6 +460,7 @@ def login():
     return render_template("login.jinja2")
 
 
+# Handle explicit user logout requests
 @app.route("/logout")
 @login_required
 def logout():
@@ -419,6 +469,7 @@ def logout():
     return redirect(url_for("login"))
 
 
+# Administrative dashboard GET interface route
 @app.route("/", methods=["GET"])
 @login_required
 def admin():
@@ -426,6 +477,7 @@ def admin():
     return render_template("admin.jinja2", data=data, user=current_user)
 
 
+# Handle configuration modifications, file uploads, and trigger dynamic bakes
 @app.route("/save", methods=["POST"])
 @login_required
 def save():
@@ -454,6 +506,7 @@ def save():
     l_idx = 0
     v_idx = 0
 
+    # Parse dynamic list structures from POST payload
     for idx, b_type in enumerate(types):
         b_color = colors[idx] if idx < len(colors) else "#0066cc"
         if b_type == "link":
@@ -498,6 +551,7 @@ def save():
         "buttons": parsed_buttons,
     }
 
+    # Validate slug uniqueness across all submitted vCard items
     if len(sanitized_slugs) != len(set(sanitized_slugs)):
         flash("Error: Duplicate vCard slugs detected.", "danger")
         return (
@@ -507,6 +561,7 @@ def save():
 
     try:
         with get_db() as db:
+            # Update base site variables in configuration table
             db.execute(
                 "INSERT OR REPLACE INTO site_config (key, value) VALUES ('title', ?)",
                 (title,),
@@ -520,7 +575,7 @@ def save():
                 (theme,),
             )
 
-            # Process Favicon
+            # Store uploaded binary favicon stream if present in upload form
             if "favicon" in request.files:
                 file = request.files["favicon"]
                 if file and file.filename != "":
@@ -538,7 +593,7 @@ def save():
                             (ext,),
                         )
 
-            # Process Org Logo
+            # Store uploaded binary organization logo stream if present in form
             if "org_logo" in request.files:
                 file = request.files["org_logo"]
                 if file and file.filename != "":
@@ -556,11 +611,12 @@ def save():
                             (ext,),
                         )
 
-            # Atomic button state replacement
+            # Clear button relational tables for atomic rebuild
             db.execute("DELETE FROM button_links")
             db.execute("DELETE FROM button_vcards")
             db.execute("DELETE FROM buttons")
 
+            # Insert updated button structures and related detail records
             for position, btn in enumerate(parsed_buttons, start=1):
                 db.execute(
                     "INSERT INTO buttons (type, position, color) VALUES (?, ?, ?)",
@@ -599,6 +655,7 @@ def save():
             500,
         )
 
+    # Execute static bake step to generate site files on disk
     try:
         bake_static_site()
         flash("Settings saved and static site baked successfully!", "success")
@@ -608,5 +665,6 @@ def save():
     return redirect(url_for("admin"))
 
 
+# Run development server if executed directly as entrypoint script
 if __name__ == "__main__":
     app.run(host="127.0.0.1", port=5000, debug=False)
