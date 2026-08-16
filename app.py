@@ -14,32 +14,37 @@ from flask_login import (
 )
 from werkzeug.security import generate_password_hash, check_password_hash
 from werkzeug.middleware.proxy_fix import ProxyFix
-from werkzeug.serving import is_running_from_reloader
+from werkzeug.utils import secure_filename
 
 app = Flask(__name__)
 
+# SECURITY: Secret key configuration
+# Set FLASK_SECRET_KEY in production via environment variable.
+# Fallback generates a strong key per process restart (will invalidate sessions across restarts).
 app.secret_key = os.environ.get("FLASK_SECRET_KEY") or os.urandom(24)
 
+# Trust reverse proxy headers (e.g., Nginx, Caddy, Cloudflare)
 app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_prefix=1)
 
+# Cookie security settings driven by environment variable or fallback to production defaults
 COOKIE_SECURE = os.environ.get("COOKIE_SECURE", "true").lower() in ("true", "1", "yes")
 app.config.update(
     TEMPLATES_AUTO_RELOAD=True,
     SESSION_COOKIE_SECURE=COOKIE_SECURE,
     SESSION_COOKIE_HTTPONLY=True,
     SESSION_COOKIE_SAMESITE="Lax",
-    MAX_CONTENT_LENGTH=16 * 1024 * 1024,  # 16MB file upload limit
+    MAX_CONTENT_LENGTH=16 * 1024 * 1024,  # Limit file uploads to 16MB max payload
 )
 
+# File paths and base configuration
 DB_PATH = os.environ.get("DB_PATH", "app.db")
 OUTPUT_DIR = os.path.abspath(os.environ.get("OUTPUT_DIR", "/srv/www/example.com/@info"))
 
+# Administrative defaults
 DEPLOYMENT_SUPERADMIN_USER = os.environ.get("SUPERADMIN_USER") or "admin"
-# Fallback to default password if environment variable is missing or empty
 DEPLOYMENT_SUPERADMIN_PASS = (
     os.environ.get("SUPERADMIN_PASSWORD") or "SuperSecretPass123!"
 )
-
 
 login_manager = LoginManager()
 login_manager.init_app(app)
@@ -68,21 +73,22 @@ def load_user(user_id):
     return None
 
 
-# use contextmanager to make it compatible with the with block
 @contextmanager
 def get_db():
     conn = sqlite3.connect(DB_PATH)
+    # Enable foreign key support explicitly for every connection
+    conn.execute("PRAGMA foreign_keys = ON;")
     conn.row_factory = sqlite3.Row
     cursor = conn.cursor()
     try:
-        yield cursor  # pause and return conn to with block
-        conn.commit()  # no error, execution resumes
+        yield cursor
+        conn.commit()
     except Exception:
-        conn.rollback()  # error, do rollback
-        raise  # pass the error upward so it is logged
+        conn.rollback()
+        raise
     finally:
         cursor.close()
-        conn.close()  # whatever happens, close the connection
+        conn.close()
 
 
 def init_app_data():
@@ -90,11 +96,12 @@ def init_app_data():
     try:
         bake_static_site()
     except Exception as e:
-        print(f"[WARN] Initial bake failed: {e}")
+        app.logger.warning(f"Initial bake failed: {e}")
 
 
 def init_db():
-    """Idempotent schema creation and seeding."""
+    """Idempotent schema creation and initial seeding."""
+    # Ensure database path exists
     os.makedirs(os.path.dirname(os.path.abspath(DB_PATH)), exist_ok=True)
     with get_db() as db:
         db.execute("""
@@ -146,7 +153,7 @@ def init_db():
             )
             """)
 
-        # Initialize superadmin account
+        # Insert default superadmin user if not existing
         db.execute(
             """
             INSERT INTO users (username, password_hash)
@@ -159,55 +166,17 @@ def init_db():
             ),
         )
 
-        # cursor.execute("SELECT COUNT(*) FROM site_config WHERE key = 'title'")
-        # if not cursor.fetchone():
-        #     cursor.execute(
-        #         "INSERT INTO site_config (key, value) VALUES ('title', 'Example Company')"
-        #     )
-        #     cursor.execute(
-        #         "INSERT INTO site_config (key, value) VALUES ('bio', 'Software Solutions')"
-        #     )
-        #     cursor.execute(
-        #         "INSERT INTO site_config (key, value) VALUES ('theme', 'auto')"
-        #     )
-
-        #     cursor.execute(
-        #         "INSERT INTO buttons (type, position, color) VALUES ('vcard', 1, '#0066cc')"
-        #     )
-        #     v_id = cursor.lastrowid
-        #     cursor.execute(
-        #         """
-        #         INSERT INTO button_vcards (button_id, button_label, slug, fn, org, title, email, phone, url)
-        #         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-        #         """,
-        #         (
-        #             v_id,
-        #             "Save Contact",
-        #             "contact",
-        #             "John Doe",
-        #             "Example Inc.",
-        #             "Systems Engineer",
-        #             "john@example.com",
-        #             "+1234567890",
-        #             "https://example.com",
-        #         ),
-        #     )
-
-        #     cursor.execute(
-        #         "INSERT INTO buttons (type, position, color) VALUES ('link', 2, '#0284c7')"
-        #     )
-        #     l_id = cursor.lastrowid
-        #     cursor.execute(
-        #         """
-        #         INSERT INTO button_links (button_id, label, url)
-        #         VALUES (?, ?, ?)
-        #         """,
-        #         (l_id, "Official Website", "https://example.com"),
-        #     )
-
+        # Seed initial default settings if empty
         db.execute("SELECT COUNT(*) FROM site_config WHERE key = 'theme'")
-        if not db.fetchone():
+        if not db.fetchone()[0]:
             db.execute("INSERT INTO site_config (key, value) VALUES ('theme', 'auto')")
+
+
+@app.cli.command("init-db")
+def init_db_command():
+    """CLI command to safely initialize database and bake site during deployment."""
+    init_app_data()
+    print("Database schema initialized and initial static bake complete.")
 
 
 def get_site_data():
@@ -282,15 +251,19 @@ def get_site_data():
 
 
 def sanitize_slug(name: str) -> str:
+    """Sanitize URL slugs by reducing to lowercase alphanumerics, dashes, and underscores."""
     name = name.strip().lower()
     name = re.sub(r"[^a-z0-9_\-]", "_", name)
     return name or "contact"
 
 
 def normalize_url(url: str) -> str:
+    """Ensure URLs have standard HTTPS scheme if omitted, avoiding protocol-relative vectors."""
     url = url.strip()
     if not url:
         return ""
+    if url.startswith("//"):
+        return f"https:{url}"
     if url.startswith("/") or url.startswith("."):
         return url
     parsed = urlparse(url)
@@ -299,24 +272,34 @@ def normalize_url(url: str) -> str:
     return url
 
 
-def generate_vcard_content(vcard):
+def clean_vcard_field(val: str) -> str:
+    """Sanitize vCard text values against field injection and character breaking."""
+    if not val:
+        return ""
+    val = val.replace("\r", "").replace("\n", " ")
+    return val.replace("\\", "\\\\").replace(";", "\\;").replace(",", "\\,")
+
+
+def generate_vcard_content(vcard: dict) -> str:
+    """Construct a RFC-compliant vCard 3.0 string."""
     return (
         "BEGIN:VCARD\n"
         "VERSION:3.0\n"
-        f"FN:{vcard.get('fn', '')}\n"
-        f"ORG:{vcard.get('org', '')}\n"
-        f"TITLE:{vcard.get('title', '')}\n"
-        f"EMAIL:{vcard.get('email', '')}\n"
-        f"TEL:{vcard.get('phone', '')}\n"
-        f"URL:{vcard.get('url', '')}\n"
+        f"FN:{clean_vcard_field(vcard.get('fn', ''))}\n"
+        f"ORG:{clean_vcard_field(vcard.get('org', ''))}\n"
+        f"TITLE:{clean_vcard_field(vcard.get('title', ''))}\n"
+        f"EMAIL:{clean_vcard_field(vcard.get('email', ''))}\n"
+        f"TEL:{clean_vcard_field(vcard.get('phone', ''))}\n"
+        f"URL:{clean_vcard_field(vcard.get('url', ''))}\n"
         "END:VCARD\n"
     )
 
 
 def bake_static_site():
+    """Generates the static site files and writes them directly to the target output directory."""
     os.makedirs(OUTPUT_DIR, exist_ok=True)
     with get_db() as db:
-        # 1. Export Image BLOBs to Output Directory
+        # Export favicon blob if available
         favicon_row = db.execute(
             "SELECT value, blob_value FROM site_config WHERE key = 'favicon_blob'"
         ).fetchone()
@@ -326,10 +309,12 @@ def bake_static_site():
                 "SELECT value FROM site_config WHERE key = 'favicon_filename'"
             ).fetchone()
             if fn_row and fn_row["value"]:
-                favicon_filename = fn_row["value"]
+                favicon_filename = secure_filename(fn_row["value"]) or "favicon.ico"
+
             with open(os.path.join(OUTPUT_DIR, favicon_filename), "wb") as f:
                 f.write(favicon_row["blob_value"])
 
+        # Export organization logo blob if available
         logo_row = db.execute(
             "SELECT value, blob_value FROM site_config WHERE key = 'org_logo_blob'"
         ).fetchone()
@@ -338,9 +323,9 @@ def bake_static_site():
             fn_row = db.execute(
                 "SELECT value FROM site_config WHERE key = 'org_logo_filename'"
             ).fetchone()
-            logo_filename = (
-                fn_row["value"] if fn_row and fn_row["value"] else "logo.png"
-            )
+            raw_filename = fn_row["value"] if fn_row and fn_row["value"] else "logo.png"
+            logo_filename = secure_filename(raw_filename) or "logo.png"
+
             with open(os.path.join(OUTPUT_DIR, logo_filename), "wb") as f:
                 f.write(logo_row["blob_value"])
 
@@ -396,6 +381,7 @@ def bake_static_site():
         "buttons": processed_buttons,
     }
 
+    # Render static HTML file using Jinja template
     rendered_html = render_template("site_template.jinja2", data=render_context)
     index_path = os.path.join(OUTPUT_DIR, "index.html")
     with open(index_path, "w", encoding="utf-8") as f:
@@ -518,6 +504,7 @@ def save():
         "buttons": parsed_buttons,
     }
 
+    # Reject payload if duplicate vcard slugs are submitted
     if len(sanitized_slugs) != len(set(sanitized_slugs)):
         flash("Error: Duplicate vCard slugs detected.", "danger")
         return (
@@ -527,7 +514,7 @@ def save():
 
     try:
         with get_db() as db:
-            db.execute("BEGIN TRANSACTION")
+            # Context manager handles connection commit and transaction boundaries implicitly
             db.execute(
                 "INSERT OR REPLACE INTO site_config (key, value) VALUES ('title', ?)",
                 (title,),
@@ -541,36 +528,41 @@ def save():
                 (theme,),
             )
 
-            # Process Favicon Upload as BLOB
+            # File upload handling for favicon
             if "favicon" in request.files:
                 file = request.files["favicon"]
                 if file and file.filename != "":
-                    blob_bytes = file.read()
-                    root, extension = os.path.splitext(file.filename)
-                    db.execute(
-                        "INSERT OR REPLACE INTO site_config (key, value, blob_value) VALUES ('favicon_blob', 'present', ?)",
-                        (sqlite3.Binary(blob_bytes),),
-                    )
-                    db.execute(
-                        "INSERT OR REPLACE INTO site_config (key, value) VALUES ('favicon_filename', ?)",
-                        ("favicon" + extension,),
-                    )
+                    safe_fname = secure_filename(file.filename)
+                    if safe_fname:
+                        blob_bytes = file.read()
+                        _, extension = os.path.splitext(safe_fname)
+                        db.execute(
+                            "INSERT OR REPLACE INTO site_config (key, value, blob_value) VALUES ('favicon_blob', 'present', ?)",
+                            (sqlite3.Binary(blob_bytes),),
+                        )
+                        db.execute(
+                            "INSERT OR REPLACE INTO site_config (key, value) VALUES ('favicon_filename', ?)",
+                            ("favicon" + extension,),
+                        )
 
-            # Process Organization Logo Upload as BLOB
+            # File upload handling for organization logo
             if "org_logo" in request.files:
                 file = request.files["org_logo"]
                 if file and file.filename != "":
-                    blob_bytes = file.read()
-                    root, extension = os.path.splitext(file.filename)
-                    db.execute(
-                        "INSERT OR REPLACE INTO site_config (key, value, blob_value) VALUES ('org_logo_blob', 'present', ?)",
-                        (sqlite3.Binary(blob_bytes),),
-                    )
-                    db.execute(
-                        "INSERT OR REPLACE INTO site_config (key, value) VALUES ('org_logo_filename', ?)",
-                        ("logo" + extension,),
-                    )
+                    safe_fname = secure_filename(file.filename)
+                    if safe_fname:
+                        blob_bytes = file.read()
+                        _, extension = os.path.splitext(safe_fname)
+                        db.execute(
+                            "INSERT OR REPLACE INTO site_config (key, value, blob_value) VALUES ('org_logo_blob', 'present', ?)",
+                            (sqlite3.Binary(blob_bytes),),
+                        )
+                        db.execute(
+                            "INSERT OR REPLACE INTO site_config (key, value) VALUES ('org_logo_filename', ?)",
+                            ("logo" + extension,),
+                        )
 
+            # Clear and rebuild button ordering structure
             db.execute("DELETE FROM button_links")
             db.execute("DELETE FROM button_vcards")
             db.execute("DELETE FROM buttons")
@@ -592,7 +584,7 @@ def save():
                         """
                         INSERT INTO button_vcards (button_id, button_label, slug, fn, org, title, email, phone, url)
                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """,
+                        """,
                         (
                             btn_id,
                             btn["button_label"],
@@ -621,10 +613,6 @@ def save():
 
     return redirect(url_for("admin"))
 
-
-if not app.debug or is_running_from_reloader():
-    with app.app_context():
-        init_app_data()
 
 if __name__ == "__main__":
     app.run(host="127.0.0.1", port=5000, debug=False)
