@@ -18,9 +18,7 @@ from werkzeug.serving import is_running_from_reloader
 
 app = Flask(__name__)
 
-app.secret_key = os.environ.get(
-    "FLASK_SECRET_KEY", "change-this-in-production-to-a-random-secret"
-)
+app.secret_key = os.environ.get("FLASK_SECRET_KEY") or os.urandom(24)
 
 app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_prefix=1)
 
@@ -41,7 +39,6 @@ DEPLOYMENT_SUPERADMIN_USER = os.environ.get("SUPERADMIN_USER") or "admin"
 DEPLOYMENT_SUPERADMIN_PASS = (
     os.environ.get("SUPERADMIN_PASSWORD") or "SuperSecretPass123!"
 )
-print(DEPLOYMENT_SUPERADMIN_PASS)
 
 
 login_manager = LoginManager()
@@ -58,12 +55,10 @@ class User(UserMixin):
 
 @login_manager.user_loader
 def load_user(user_id):
-    print("load_user")
     with get_db() as db:
         user_row = db.execute(
             "SELECT id, username, password_hash FROM users WHERE id = ?", (user_id,)
         ).fetchone()
-        print(dict(user_row))
         if user_row:
             return User(
                 id=user_row["id"],
@@ -91,7 +86,6 @@ def get_db():
 
 
 def init_app_data():
-    print("init_app_data")
     init_db()
     try:
         bake_static_site()
@@ -410,12 +404,9 @@ def bake_static_site():
 
 @app.route("/login", methods=["GET", "POST"])
 def login():
-    print("login")
-    print(current_user.is_authenticated)
     if current_user.is_authenticated:
         return redirect(url_for("admin"))
 
-    print(request.method)
     if request.method == "POST":
         username = request.form.get("username", "").strip()
         password = request.form.get("password", "")
@@ -426,10 +417,6 @@ def login():
                 (username,),
             ).fetchone()
 
-        print(dict(user_row))
-        print(user_row["password_hash"])
-        print(password)
-        print(check_password_hash(user_row["password_hash"], password))
         if user_row and check_password_hash(user_row["password_hash"], password):
             user = User(
                 id=user_row["id"],
@@ -559,13 +546,14 @@ def save():
                 file = request.files["favicon"]
                 if file and file.filename != "":
                     blob_bytes = file.read()
+                    root, extension = os.path.splitext(file.filename)
                     db.execute(
                         "INSERT OR REPLACE INTO site_config (key, value, blob_value) VALUES ('favicon_blob', 'present', ?)",
                         (sqlite3.Binary(blob_bytes),),
                     )
                     db.execute(
                         "INSERT OR REPLACE INTO site_config (key, value) VALUES ('favicon_filename', ?)",
-                        (file.filename,),
+                        ("favicon" + extension,),
                     )
 
             # Process Organization Logo Upload as BLOB
@@ -573,13 +561,14 @@ def save():
                 file = request.files["org_logo"]
                 if file and file.filename != "":
                     blob_bytes = file.read()
+                    root, extension = os.path.splitext(file.filename)
                     db.execute(
                         "INSERT OR REPLACE INTO site_config (key, value, blob_value) VALUES ('org_logo_blob', 'present', ?)",
                         (sqlite3.Binary(blob_bytes),),
                     )
                     db.execute(
                         "INSERT OR REPLACE INTO site_config (key, value) VALUES ('org_logo_filename', ?)",
-                        (file.filename,),
+                        ("logo" + extension,),
                     )
 
             db.execute("DELETE FROM button_links")
