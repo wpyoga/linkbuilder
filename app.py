@@ -19,6 +19,8 @@ from flask_login import (
     current_user,
 )
 from flask_wtf import CSRFProtect
+from flask_wtf.csrf import CSRFError
+from flask import session
 from werkzeug.security import generate_password_hash, check_password_hash
 from werkzeug.middleware.proxy_fix import ProxyFix
 
@@ -126,6 +128,14 @@ app.config.update(
 # CSRFProtect closes that gap with an explicit, unguessable per-session token checked on
 # every mutating request -- currently /login and /save.
 csrf = CSRFProtect(app)
+
+
+@app.errorhandler(CSRFError)
+def handle_csrf_error(error):
+    logout_user()
+    session.clear()
+    flash("Your session has expired. Please log in again.", "danger")
+    return redirect(url_for("login"))
 
 # Resolve default paths for the SQLite database and the static export destination directory.
 # DB_PATH is made absolute immediately (not left as the raw env value / relative default)
