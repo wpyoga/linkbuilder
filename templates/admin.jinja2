@@ -185,6 +185,28 @@
       color: #721c24;
     }
 
+    .field-error {
+      border-color: #dc2626 !important;
+      background: #fef2f2;
+    }
+
+    .field-error-message {
+      margin-top: 4px;
+      color: #b91c1c;
+      font-size: 0.85rem;
+      font-weight: 500;
+    }
+
+    .validation-summary {
+      padding: 10px;
+      border: 1px solid #fca5a5;
+      border-radius: 4px;
+      margin-bottom: 15px;
+      background: #fef2f2;
+      color: #991b1b;
+      font-weight: 600;
+    }
+
     .type-tag {
       font-size: 0.75rem;
       padding: 2px 6px;
@@ -231,6 +253,9 @@
     {% set messages = get_flashed_messages(with_categories=true) %}
     {% if messages %}
       {% for category, message in messages %}<div class="alert alert-{{ category }}">{{ message }}</div>{% endfor %}
+    {% endif %}
+    {% if validation_errors %}
+      <div class="validation-summary">Please correct the highlighted fields below.</div>
     {% endif %}
     <form action="/save"
           method="POST"
@@ -284,6 +309,7 @@
           <h3>Page Buttons (Arrange & Order)</h3>
           <div id="buttons-container">
             {% for btn in data.buttons %}
+              {% set btn_errors = validation_errors.get(loop.index0, {}) if validation_errors else {} %}
               {# data-field-* attributes (not name=) are read by collectButtonsAsJson() at
         submit time and packed into the single buttons_json hidden field -- see the
         script block below. Nothing in this block is posted directly by the browser
@@ -352,7 +378,7 @@
                            oninput="updateSlugPreview(this)"
                            required />
                     <small class="slug-preview">Generates <code>./{{ btn.slug or 'contact' }}.vcf</code></small>
-                    <details class="nested-vcard-details">
+                    <details class="nested-vcard-details" {% if btn_errors %}open{% endif %}>
                       <summary>Edit Contact Card Details (Name, Phone, Email)</summary>
                       <div style="padding: 10px 12px;">
                         <label>Full Name</label>
@@ -374,17 +400,28 @@
                         <input type="email"
                                data-field="email"
                                value="{{ btn.email }}"
-                               placeholder="e.g. john@example.com" />
+                               placeholder="e.g. john@example.com"
+                               class="{{ 'field-error' if btn_errors.get('email') }}"
+                               {% if btn_errors.get('email') %}aria-invalid="true"{% endif %} />
+                        {% if btn_errors.get('email') %}<div class="field-error-message">{{ btn_errors.email }}</div>{% endif %}
                         <label>Phone Number</label>
                         <input type="text"
                                data-field="phone"
                                value="{{ btn.phone }}"
-                               placeholder="e.g. +1 555 019 2831" />
+                               placeholder="e.g. +1 555 019 2831"
+                               pattern="\+[0-9][0-9 -]*"
+                               title="Enter a phone number starting with + and containing only numbers, spaces, or hyphens."
+                               class="{{ 'field-error' if btn_errors.get('phone') }}"
+                               {% if btn_errors.get('phone') %}aria-invalid="true"{% endif %} />
+                        {% if btn_errors.get('phone') %}<div class="field-error-message">{{ btn_errors.phone }}</div>{% endif %}
                         <label>Website URL</label>
                         <input type="text"
                                data-field="url"
                                value="{{ btn.url }}"
-                               placeholder="e.g. https://example.com" />
+                               placeholder="e.g. https://example.com"
+                               class="{{ 'field-error' if btn_errors.get('url') }}"
+                               {% if btn_errors.get('url') %}aria-invalid="true"{% endif %} />
+                        {% if btn_errors.get('url') %}<div class="field-error-message">{{ btn_errors.url }}</div>{% endif %}
                       </div>
                     </details>
                   {% endif %}

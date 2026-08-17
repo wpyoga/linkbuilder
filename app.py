@@ -27,6 +27,9 @@ from werkzeug.middleware.proxy_fix import ProxyFix
 # Pillow is used to verify that uploaded raster images are actually what their extension
 # claims (magic-byte / structural verification, not filename-extension trust).
 from PIL import Image, UnidentifiedImageError
+from email_validator import EmailNotValidError, validate_email
+import phonenumbers
+from phonenumbers.phonenumberutil import NumberParseException
 
 # defusedxml protects against XML attacks (XXE, billion-laughs, external entity expansion)
 # while we parse uploaded SVGs in order to sanitize them.
@@ -394,6 +397,43 @@ def sanitize_slug(name: str) -> str:
 ALLOWED_URL_SCHEMES = {"http", "https", "mailto", "tel", "sms"}
 
 
+# Validate a vCard website as an absolute HTTP(S) URL. This is intentionally a small
+# syntactic check: it does not perform DNS lookups or HTTP requests.
+def validate_vcard_website_url(url: str) -> bool:
+    url = (url or "").strip()
+    if not url:
+        return True
+    if any(char.isspace() or ord(char) < 32 for char in url):
+        return False
+    parsed = urlparse(url)
+    return (
+        parsed.scheme.lower() in {"http", "https"}
+        and bool(parsed.netloc)
+        and bool(parsed.hostname)
+    )
+
+
+# Validate a vCard phone number using libphonenumber's parsing and "possible number"
+# validation. We deliberately do not use is_valid_number(): that would impose country-
+# specific numbering-plan rules, whereas the admin UI only requires a plausible
+# international number. The syntax check remains intentionally narrow so values accepted
+# here are exactly "+" followed by digits, spaces, and/or hyphens.
+def validate_vcard_phone(phone: str) -> bool:
+    phone = (phone or "").strip()
+    if not phone:
+        return True
+
+    if not re.fullmatch(r"\+[0-9][0-9 -]*", phone):
+        return False
+
+    try:
+        parsed = phonenumbers.parse(phone, None)
+    except NumberParseException:
+        return False
+
+    return phonenumbers.is_possible_number(parsed)
+
+
 # Normalize web URLs to enforce absolute scheme prefixes when missing, then validate the
 # resulting scheme against ALLOWED_URL_SCHEMES. Returns "" (dropping the URL entirely) if
 # the scheme is not allowed, rather than letting an attacker- or admin-mistake-controlled
@@ -624,8 +664,10 @@ def validate_buttons_payload(raw_json: str):
     and the whole payload is rejected (with a clear error message) if anything doesn't
     match, rather than silently coercing or dropping bad entries.
 
-    Returns (buttons, error_message). On success error_message is None. On failure buttons
-    is None and error_message describes what was wrong, for use in a flash message.
+    Returns (buttons, error). On success error is None. On structural validation failure,
+    error is a user-facing string. For vCard field validation failures, error is a dict
+    mapping button indexes to invalid field names and messages so the admin form can mark
+    individual inputs.
     """
     try:
         parsed = json.loads(raw_json)
@@ -637,6 +679,7 @@ def validate_buttons_payload(raw_json: str):
 
     validated = []
     seen_slugs = set()
+    field_errors = {}
 
     for i, btn in enumerate(parsed):
         if not isinstance(btn, dict):
@@ -673,6 +716,30 @@ def validate_buttons_payload(raw_json: str):
             if slug in seen_slugs:
                 return None, f"Duplicate vCard slug '{slug}' -- slugs must be unique."
             seen_slugs.add(slug)
+
+            email = str(btn.get("email", "")).strip()
+            phone = str(btn.get("phone", "")).strip()
+            website_url = str(btn.get("url", "")).strip()
+            errors = {}
+
+            if email:
+                try:
+                    # Syntax validation only; do not perform deliverability/DNS checks.
+                    validate_email(email, check_deliverability=False)
+                except EmailNotValidError:
+                    errors["email"] = "Enter a valid email address."
+
+            if not validate_vcard_phone(phone):
+                errors["phone"] = (
+                    "Enter a phone number starting with + and containing only numbers, spaces, or hyphens."
+                )
+
+            if not validate_vcard_website_url(website_url):
+                errors["url"] = "Enter a valid HTTP(S) website URL."
+
+            if errors:
+                field_errors[i] = errors
+
             validated.append(
                 {
                     "type": "vcard",
@@ -683,14 +750,17 @@ def validate_buttons_payload(raw_json: str):
                     "fn": str(btn.get("fn", "")).strip(),
                     "org": str(btn.get("org", "")).strip(),
                     "title": str(btn.get("title", "")).strip(),
-                    "email": str(btn.get("email", "")).strip(),
-                    "phone": str(btn.get("phone", "")).strip(),
-                    "url": str(btn.get("url", "")).strip(),
+                    "email": email,
+                    "phone": phone,
+                    "url": website_url,
                 }
             )
 
         else:
             return None, f"Button #{i + 1} has an unrecognized type: {btn_type!r}"
+
+    if field_errors:
+        return None, field_errors
 
     return validated, None
 
@@ -950,11 +1020,11 @@ def save():
 
     parsed_buttons, error = validate_buttons_payload(raw_buttons_json)
 
-    # Build a best-effort "posted state" for re-rendering the form on validation failure,
-    # so the operator doesn't lose their in-progress edits. If the JSON itself didn't even
-    # parse, fall back to an empty button list rather than crashing on the re-render.
+    # Preserve the submitted button objects whenever the JSON itself is parseable, including
+    # when individual vCard fields are invalid. This lets the form mark the offending fields
+    # without losing the rest of the in-progress edits.
     try:
-        posted_buttons_for_render = json.loads(raw_buttons_json) if not error else []
+        posted_buttons_for_render = json.loads(raw_buttons_json)
     except (TypeError, ValueError):
         posted_buttons_for_render = []
 
@@ -964,6 +1034,17 @@ def save():
         "theme": theme,
         "buttons": posted_buttons_for_render,
     }
+
+    if isinstance(error, dict):
+        return (
+            render_template(
+                "admin.jinja2",
+                data=posted_state,
+                user=current_user,
+                validation_errors=error,
+            ),
+            400,
+        )
 
     if error:
         flash(f"Error: {error}", "danger")
