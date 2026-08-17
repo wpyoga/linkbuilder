@@ -38,7 +38,7 @@ app = Flask(__name__)
 # prefer to manage secrets externally (e.g. a secrets manager that injects a file path).
 SECRET_KEY_FILE = os.environ.get(
     "SECRET_KEY_FILE",
-    os.path.join(os.path.dirname(os.path.abspath(__file__)), ".secret_key"),
+    os.path.join(os.path.dirname(os.path.abspath(__file__)), "secret_key"),
 )
 
 # Load the secret key. We deliberately do NOT fall back to os.urandom() here.
