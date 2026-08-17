@@ -160,10 +160,11 @@ login_manager.login_view = "login"
 # Define the user model class extending UserMixin for compatibility with Flask-Login
 class User(UserMixin):
     # Initialize the user instance with primary ID, username, and password hash
-    def __init__(self, id, username, password_hash):
+    def __init__(self, id, username, password_hash, password_change_required=False):
         self.id = id
         self.username = username
         self.password_hash = password_hash
+        self.password_change_required = password_change_required
 
 
 # Register user loader callback function for retrieving session users by database primary key
@@ -172,7 +173,8 @@ def load_user(user_id):
     # Retrieve user credentials from the database within context safety
     with get_db() as db:
         user_row = db.execute(
-            "SELECT id, username, password_hash FROM users WHERE id = ?", (user_id,)
+            "SELECT id, username, password_hash, password_change_required FROM users WHERE id = ?",
+            (user_id,),
         ).fetchone()
         # Instantiate user object if corresponding row exists in the database
         if user_row:
@@ -180,6 +182,7 @@ def load_user(user_id):
                 id=user_row["id"],
                 username=user_row["username"],
                 password_hash=user_row["password_hash"],
+                password_change_required=bool(user_row["password_change_required"]),
             )
     return None
 
@@ -231,7 +234,8 @@ def init_db():
             CREATE TABLE IF NOT EXISTS users (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 username TEXT UNIQUE NOT NULL,
-                password_hash TEXT NOT NULL
+                password_hash TEXT NOT NULL,
+                password_change_required INTEGER NOT NULL DEFAULT 1
             )
             """)
 
@@ -279,7 +283,7 @@ def init_db():
                 generated = True
 
             db.execute(
-                "INSERT INTO users (username, password_hash) VALUES (?, ?)",
+                "INSERT INTO users (username, password_hash, password_change_required) VALUES (?, ?, 1)",
                 (
                     DEPLOYMENT_SUPERADMIN_USER,
                     generate_password_hash(password, method="scrypt"),
@@ -809,6 +813,8 @@ def bake_static_site():
 @app.route("/login", methods=["GET", "POST"])
 def login():
     if current_user.is_authenticated:
+        if current_user.password_change_required:
+            return redirect(url_for("change_password"))
         return redirect(url_for("admin"))
 
     if request.method == "POST":
@@ -817,7 +823,7 @@ def login():
 
         with get_db() as db:
             user_row = db.execute(
-                "SELECT id, username, password_hash FROM users WHERE username = ?",
+                "SELECT id, username, password_hash, password_change_required FROM users WHERE username = ?",
                 (username,),
             ).fetchone()
 
@@ -827,8 +833,11 @@ def login():
                 id=user_row["id"],
                 username=user_row["username"],
                 password_hash=user_row["password_hash"],
+                password_change_required=bool(user_row["password_change_required"]),
             )
             login_user(user)
+            if user.password_change_required:
+                return redirect(url_for("change_password"))
             return redirect(url_for("admin"))
 
         flash("Invalid username or password.", "danger")
@@ -849,6 +858,8 @@ def logout():
 @app.route("/", methods=["GET"])
 @login_required
 def admin():
+    if current_user.password_change_required:
+        return redirect(url_for("change_password"))
     data = get_site_data()
     return render_template("admin.jinja2", data=data, user=current_user)
 
@@ -885,7 +896,7 @@ def change_password():
         try:
             with get_db() as db:
                 db.execute(
-                    "UPDATE users SET password_hash = ? WHERE id = ?",
+                    "UPDATE users SET password_hash = ?, password_change_required = 0 WHERE id = ?",
                     (new_password_hash, current_user.id),
                 )
         except Exception as e:
@@ -897,6 +908,7 @@ def change_password():
             return redirect(url_for("change_password"))
 
         current_user.password_hash = new_password_hash
+        current_user.password_change_required = False
         flash("Password changed successfully.", "success")
         return redirect(url_for("admin"))
 
@@ -912,7 +924,10 @@ def change_password():
 @app.route("/save", methods=["POST"])
 @login_required
 def save():
-    title = request.form.get("title", "")
+    if current_user.password_change_required:
+        return redirect(url_for("change_password"))
+
+    title = request.form.get("site_title", "")
     bio = request.form.get("bio", "")
     theme = request.form.get("theme", "auto")
     raw_buttons_json = request.form.get("buttons_json", "[]")
