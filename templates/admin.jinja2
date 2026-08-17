@@ -267,7 +267,7 @@
 
                   <label>vCard Filename Slug</label>
                   <input type="text" data-field="slug" value="{{ btn.slug }}" placeholder="e.g. john_doe" oninput="updateSlugPreview(this)" required />
-                  <small class="slug-preview">Generates <code>./vcard/{{ btn.slug or 'contact' }}.vcf</code></small>
+                  <small class="slug-preview">Generates <code>./{{ btn.slug or 'contact' }}.vcf</code></small>
 
                   <details class="nested-vcard-details">
                     <summary>Edit Contact Card Details (Name, Phone, Email)</summary>
@@ -347,7 +347,7 @@
         const block = inputEl.closest('.button-block');
         const previewCode = block.querySelector('.slug-preview code');
         const cleanSlug = sanitizeSlugJs(inputEl.value);
-        previewCode.textContent = `./vcard/${cleanSlug}.vcf`;
+        previewCode.textContent = `./${cleanSlug}.vcf`;
       }
 
       function moveBlock(btn, direction) {
@@ -429,7 +429,7 @@
 
             <label>vCard Filename Slug</label>
             <input type="text" data-field="slug" placeholder="e.g. john_doe" oninput="updateSlugPreview(this)" required>
-            <small class="slug-preview">Generates <code>./vcard/contact.vcf</code></small>
+            <small class="slug-preview">Generates <code>./contact.vcf</code></small>
 
             <details class="nested-vcard-details" open>
               <summary>Edit Contact Card Details (Name, Phone, Email)</summary>

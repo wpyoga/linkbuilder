@@ -755,8 +755,6 @@ def bake_static_site():
 
     # Retrieve current structured state from SQLite backend
     data = get_site_data()
-    vcard_dir = os.path.join(OUTPUT_DIR, "vcard")
-    os.makedirs(vcard_dir, exist_ok=True)
 
     processed_buttons = []
     # Process configuration buttons and compile individual vCard files
@@ -774,7 +772,7 @@ def bake_static_site():
         elif btn["type"] == "vcard":
             slug = sanitize_slug(btn.get("slug", "contact"))
             vcard_filename = f"{slug}.vcf"
-            vcard_path = os.path.join(vcard_dir, vcard_filename)
+            vcard_path = os.path.join(OUTPUT_DIR, vcard_filename)
 
             vcard_data = {
                 "fn": btn.get("fn", ""),
@@ -795,7 +793,7 @@ def bake_static_site():
                     "color": btn.get("color", "#0066cc"),
                     "text_color": btn.get("text_color", "#ffffff"),
                     "label": btn.get("button_label", "Save Contact"),
-                    "target_url": f"./vcard/{vcard_filename}",
+                    "target_url": f"./{vcard_filename}",
                 }
             )
 
