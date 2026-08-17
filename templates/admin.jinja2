@@ -195,8 +195,16 @@
 
       <div class="card">
         <h3>General Info & Media</h3>
-        <label>Page Title / Name</label>
-        <input type="text" name="title" value="{{ data.title }}" placeholder="e.g. Acme Corporation" required />
+        <label for="page-title">Page Title / Name</label>
+        <input
+          id="page-title"
+          type="text"
+          name="site_title"
+          value="{{ data.title }}"
+          autocomplete="off"
+          placeholder="e.g. Acme Corporation"
+          required
+        />
 
         <label>Bio / Description</label>
         <textarea name="bio" rows="3" placeholder="e.g. Software engineering and consulting services.">{{ data.bio }}</textarea>
