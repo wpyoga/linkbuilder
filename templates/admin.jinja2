@@ -236,6 +236,143 @@
       color: #0284c7;
       font-weight: bold;
     }
+
+    .icon-picker-control {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-top: 8px;
+    }
+
+    .icon-picker-control label {
+      margin: 0;
+    }
+
+    .icon-picker-button {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      min-height: 32px;
+      padding: 4px 8px;
+      border: 1px solid #cbd5e1;
+      border-radius: 4px;
+      background: #f8fafc;
+      color: #334155;
+      cursor: pointer;
+      font: inherit;
+    }
+
+    .icon-picker-button:hover {
+      background: #f1f5f9;
+    }
+
+    .icon-picker-button img {
+      width: 20px;
+      height: 20px;
+      object-fit: contain;
+      flex: 0 0 20px;
+    }
+
+    .icon-picker-modal {
+      display: none;
+      position: fixed;
+      inset: 0;
+      z-index: 1000;
+      padding: 20px;
+      box-sizing: border-box;
+      align-items: center;
+      justify-content: center;
+      background: rgba(15, 23, 42, 0.55);
+    }
+
+    .icon-picker-modal.open {
+      display: flex;
+    }
+
+    .icon-picker-dialog {
+      display: flex;
+      flex-direction: column;
+      width: min(620px, 100%);
+      max-height: min(720px, 90vh);
+      background: #fff;
+      border-radius: 8px;
+      box-shadow: 0 12px 32px rgba(15, 23, 42, 0.25);
+      overflow: hidden;
+    }
+
+    .icon-picker-header {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 15px;
+      border-bottom: 1px solid #e2e8f0;
+    }
+
+    .icon-picker-header h3 {
+      margin: 0;
+      font-size: 1rem;
+      white-space: nowrap;
+    }
+
+    .icon-picker-header input[type="search"] {
+      flex: 1;
+      width: auto;
+      margin-top: 0;
+    }
+
+    .icon-picker-results {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+      gap: 8px;
+      padding: 15px;
+      overflow-y: auto;
+    }
+
+    .icon-result {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      min-height: 80px;
+      padding: 8px;
+      border: 1px solid #e2e8f0;
+      border-radius: 6px;
+      background: #fff;
+      color: #334155;
+      cursor: pointer;
+      font: inherit;
+    }
+
+    .icon-result:hover {
+      background: #f8fafc;
+      border-color: #cbd5e1;
+    }
+
+    .icon-result img {
+      width: 24px;
+      height: 24px;
+      object-fit: contain;
+    }
+
+    .icon-result span {
+      max-width: 100%;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      font-size: 0.8rem;
+    }
+
+    .icon-result.none {
+      min-height: 42px;
+    }
+
+    .icon-picker-empty {
+      grid-column: 1 / -1;
+      padding: 20px;
+      color: #64748b;
+      text-align: center;
+    }
     </style>
   </head>
   <body>
@@ -361,6 +498,18 @@
                            data-default="#ffffff" />
                     <button type="button" class="color-reset-btn" onclick="resetColor(this)">Default</button>
                   </div>
+                  <div class="icon-picker-control">
+                    <label style="margin:0;">Button Icon:</label>
+                    <button type="button"
+                            class="icon-picker-button"
+                            onclick="openIconPicker(this)">
+                      <img src="{{ '/icons/logos/' ~ btn.icon ~ '.svg' if btn.icon else '' }}"
+                           alt=""
+                           {% if not btn.icon %}style="display:none"{% endif %} />
+                      <span>{{ btn.icon|replace('-', ' ') |title if btn.icon else 'No icon' }}</span>
+                    </button>
+                    <input type="hidden" data-field="icon" value="{{ btn.icon or '' }}" />
+                  </div>
                   {% if btn.type == 'link' %}
                     <label>Button Label</label>
                     <input type="text"
@@ -449,7 +598,132 @@
         </div>
         <button type="submit" class="submit-btn">Save & Bake Static Site</button>
       </form>
+      <div id="icon-picker-modal"
+           class="icon-picker-modal"
+           onclick="handleIconPickerBackdrop(event)">
+        <div class="icon-picker-dialog"
+             role="dialog"
+             aria-modal="true"
+             aria-labelledby="icon-picker-title">
+          <div class="icon-picker-header">
+            <h3 id="icon-picker-title">Choose a brand icon</h3>
+            <input id="icon-picker-search"
+                   type="search"
+                   placeholder="Search brand icons..."
+                   autocomplete="off" />
+            <button type="button" class="color-reset-btn" onclick="closeIconPicker()">Close</button>
+          </div>
+          <div id="icon-picker-results" class="icon-picker-results"></div>
+        </div>
+      </div>
       <script>
+      const iconCatalog = {{ icon_catalog|default([])|tojson }};
+      let activeIconPickerButton = null;
+
+      function iconAssetUrl(iconId) {
+        return `/icons/logos/${encodeURIComponent(iconId)}.svg`;
+      }
+
+      function openIconPicker(button) {
+        activeIconPickerButton = button;
+        const modal = document.getElementById("icon-picker-modal");
+        const search = document.getElementById("icon-picker-search");
+        modal.classList.add("open");
+        search.value = "";
+        renderIconPickerResults("");
+        search.focus();
+      }
+
+      function closeIconPicker() {
+        document.getElementById("icon-picker-modal").classList.remove("open");
+        activeIconPickerButton = null;
+      }
+
+      function handleIconPickerBackdrop(event) {
+        if (event.target === event.currentTarget) closeIconPicker();
+      }
+
+      function renderIconPickerResults(query) {
+        const results = document.getElementById("icon-picker-results");
+        const normalized = query.trim().toLowerCase();
+        const matches = iconCatalog
+          .filter(
+            icon =>
+              !normalized ||
+              icon.name.toLowerCase().includes(normalized) ||
+              icon.id.includes(normalized)
+          )
+          .slice(0, 60);
+
+        results.replaceChildren();
+
+        const none = document.createElement("button");
+        none.type = "button";
+        none.className = "icon-result none";
+        none.textContent = "No icon";
+        none.onclick = () => selectIcon("");
+        results.appendChild(none);
+
+        if (!matches.length) {
+          const empty = document.createElement("div");
+          empty.className = "icon-picker-empty";
+          empty.textContent = "No matching brand icons.";
+          results.appendChild(empty);
+          return;
+        }
+
+        matches.forEach(icon => {
+          const item = document.createElement("button");
+          item.type = "button";
+          item.className = "icon-result";
+          item.title = icon.name;
+          item.onclick = () => selectIcon(icon.id);
+
+          const image = document.createElement("img");
+          image.src = iconAssetUrl(icon.id);
+          image.alt = "";
+          image.loading = "lazy";
+          item.appendChild(image);
+
+          const label = document.createElement("span");
+          label.textContent = icon.name;
+          item.appendChild(label);
+          results.appendChild(item);
+        });
+      }
+
+      function selectIcon(iconId) {
+        if (!activeIconPickerButton) return;
+        const block = activeIconPickerButton.closest(".button-block");
+        const field = block.querySelector('[data-field="icon"]');
+        const image = activeIconPickerButton.querySelector("img");
+        const label = activeIconPickerButton.querySelector("span");
+
+        field.value = iconId;
+        if (iconId) {
+          image.src = iconAssetUrl(iconId);
+          image.style.display = "";
+          const match = iconCatalog.find(icon => icon.id === iconId);
+          label.textContent = match ? match.name : iconId;
+        } else {
+          image.removeAttribute("src");
+          image.style.display = "none";
+          label.textContent = "No icon";
+        }
+
+        closeIconPicker();
+      }
+
+      document
+        .getElementById("icon-picker-search")
+        .addEventListener("input", event =>
+          renderIconPickerResults(event.target.value)
+        );
+
+      document.addEventListener("keydown", event => {
+        if (event.key === "Escape") closeIconPicker();
+      });
+
     // Walk every .button-block currently in the DOM (in their current, possibly
     // user-reordered, order) and build a plain JS array of button objects from their
     // data-field="..." inputs. This runs once, right before submit, and the result is
@@ -545,6 +819,11 @@
               <input type="color" data-field="text_color" value="#ffffff" data-default="#ffffff">
               <button type="button" class="color-reset-btn" onclick="resetColor(this)">Default</button>
             </div>
+            <div class="icon-picker-control">
+              <label style="margin:0;">Button Icon:</label>
+              <button type="button" class="icon-picker-button" onclick="openIconPicker(this)"><img alt="" style="display:none" /><span>No icon</span></button>
+              <input type="hidden" data-field="icon" value="">
+            </div>
             <label>Button Label</label>
             <input type="text" data-field="label" placeholder="e.g. Official Website" oninput="updateSummaryTitle(this)" required>
             <label>Target URL</label>
@@ -580,6 +859,11 @@
               <label style="margin:0;">Button Text Color:</label>
               <input type="color" data-field="text_color" value="#ffffff" data-default="#ffffff">
               <button type="button" class="color-reset-btn" onclick="resetColor(this)">Default</button>
+            </div>
+            <div class="icon-picker-control">
+              <label style="margin:0;">Button Icon:</label>
+              <button type="button" class="icon-picker-button" onclick="openIconPicker(this)"><img alt="" style="display:none" /><span>No icon</span></button>
+              <input type="hidden" data-field="icon" value="">
             </div>
             <label>Button Label on Public Page</label>
             <input type="text" data-field="button_label" placeholder="e.g. Save Contact Info" oninput="updateSummaryTitle(this)" required>

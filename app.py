@@ -6,6 +6,7 @@ import json
 import shutil
 import secrets
 import sqlite3
+import urllib.request
 
 from contextlib import contextmanager
 from urllib.parse import urlparse
@@ -159,6 +160,21 @@ DB_PATH = os.path.abspath(
     )
 )
 OUTPUT_DIR = os.path.abspath(os.environ.get("OUTPUT_DIR", "/srv/www/example.com/@info"))
+
+ICON_CATALOG_PATH = os.path.abspath(
+    os.environ.get(
+        "ICON_CATALOG_PATH",
+        os.path.join(
+            os.path.dirname(os.path.abspath(__file__)), "static", "icons", "logos.json"
+        ),
+    )
+)
+ICON_CATALOG_URL = os.environ.get(
+    "ICON_CATALOG_URL",
+    "https://raw.githubusercontent.com/iconify/icon-sets/master/json/logos.json",
+)
+ICON_NAME_RE = re.compile(r"^[a-z0-9][a-z0-9-]*$")
+_icon_catalog_cache = None
 
 # Administrative bootstrap username. Unlike the password below, a predictable default
 # username is not a meaningful security weakness on its own (usernames aren't secret), so
@@ -330,6 +346,13 @@ def init_db_command():
         app.logger.warning(f"Initial bake failed: {e}")
 
 
+@app.cli.command("sync-icons")
+def sync_icons_command():
+    """Download/cache the SVG Logos catalog used by the admin icon picker."""
+    catalog = sync_icon_catalog()
+    print(f"SVG Logos catalog synchronized: {len(catalog['icons'])} icons.")
+
+
 # Helper function to query complete site state from SQLite storage.
 DEFAULT_LIGHT_BACKGROUND = "#f8fafc"
 DEFAULT_DARK_BACKGROUND = "#0f172a"
@@ -338,6 +361,94 @@ ALLOWED_THEMES = {"auto", "light", "dark"}
 
 def validate_hex_color(value: str) -> bool:
     return bool(re.fullmatch(r"#[0-9a-fA-F]{6}", (value or "").strip()))
+
+
+def sync_icon_catalog():
+    """Download and atomically cache the CC0 SVG Logos IconifyJSON catalog."""
+    os.makedirs(os.path.dirname(ICON_CATALOG_PATH), exist_ok=True)
+    request = urllib.request.Request(
+        ICON_CATALOG_URL,
+        headers={"User-Agent": "Linkbuilder/1.0"},
+    )
+    with urllib.request.urlopen(request, timeout=15) as response:
+        payload = response.read()
+
+    catalog = json.loads(payload)
+    if catalog.get("prefix") != "logos" or not isinstance(catalog.get("icons"), dict):
+        raise ValueError("Downloaded SVG Logos catalog has an unexpected format.")
+
+    temporary_path = f"{ICON_CATALOG_PATH}.tmp"
+    with open(temporary_path, "wb") as f_out:
+        f_out.write(payload)
+    os.replace(temporary_path, ICON_CATALOG_PATH)
+
+    global _icon_catalog_cache
+    _icon_catalog_cache = catalog
+    return catalog
+
+
+def load_icon_catalog():
+    global _icon_catalog_cache
+
+    if _icon_catalog_cache is not None:
+        return _icon_catalog_cache
+
+    try:
+        with open(ICON_CATALOG_PATH, "r", encoding="utf-8") as f_in:
+            catalog = json.load(f_in)
+    except FileNotFoundError:
+        catalog = sync_icon_catalog()
+
+    if catalog.get("prefix") != "logos" or not isinstance(catalog.get("icons"), dict):
+        raise ValueError("Local SVG Logos catalog has an unexpected format.")
+
+    _icon_catalog_cache = catalog
+    return catalog
+
+
+def icon_display_name(icon_name: str) -> str:
+    return icon_name.replace("-", " ").title()
+
+
+def get_icon_catalog_metadata():
+    catalog = load_icon_catalog()
+    return [
+        {"id": name, "name": icon_display_name(name)}
+        for name in sorted(
+            catalog["icons"],
+            key=lambda value: icon_display_name(value).casefold(),
+        )
+    ]
+
+
+def get_icon_svg(icon_name: str) -> bytes:
+    if not ICON_NAME_RE.fullmatch(icon_name):
+        raise KeyError(icon_name)
+
+    icon = load_icon_catalog()["icons"].get(icon_name)
+    if not icon:
+        raise KeyError(icon_name)
+
+    width = icon.get("width", 24)
+    height = icon.get("height", 24)
+    raw_svg = (
+        f'<svg xmlns="http://www.w3.org/2000/svg" width="{width}" '
+        f'height="{height}" viewBox="0 0 {width} {height}">'
+        f'{icon.get("body", "")}</svg>'
+    ).encode("utf-8")
+
+    return sanitize_svg(raw_svg)
+
+
+def export_selected_icons(buttons, output_dir):
+    for icon_name in sorted({btn.get("icon") for btn in buttons if btn.get("icon")}):
+        try:
+            svg_bytes = get_icon_svg(icon_name)
+        except KeyError:
+            raise ValueError(f"Unknown brand icon: {icon_name!r}")
+
+        with open(os.path.join(output_dir, f"icon-{icon_name}.svg"), "wb") as f_out:
+            f_out.write(svg_bytes)
 
 
 def get_site_data():
@@ -710,6 +821,22 @@ def validate_buttons_payload(raw_json: str):
 
         btn_type = btn.get("type")
         color = btn.get("color") or ("#28a745" if btn_type == "link" else "#0284c7")
+        icon = str(btn.get("icon", "")).strip()
+        if icon:
+            if not ICON_NAME_RE.fullmatch(icon):
+                return None, f"Button #{i + 1} has an invalid brand icon identifier."
+            try:
+                if icon not in load_icon_catalog()["icons"]:
+                    return (
+                        None,
+                        f"Button #{i + 1} uses an unknown brand icon: {icon!r}.",
+                    )
+            except Exception as e:
+                app.logger.error(
+                    f"Unable to load SVG Logos catalog during validation: {e}"
+                )
+                return None, "Brand icons are temporarily unavailable."
+
         text_color = btn.get("text_color") or "#ffffff"
         if not re.fullmatch(r"#[0-9a-fA-F]{6}", color):
             color = "#28a745" if btn_type == "link" else "#0284c7"
@@ -730,6 +857,7 @@ def validate_buttons_payload(raw_json: str):
                     "text_color": text_color,
                     "label": label,
                     "url": url,
+                    "icon": icon,
                 }
             )
 
@@ -769,6 +897,7 @@ def validate_buttons_payload(raw_json: str):
                     "color": color,
                     "text_color": text_color,
                     "button_label": button_label,
+                    "icon": icon,
                     "slug": slug,
                     "fn": str(btn.get("fn", "")).strip(),
                     "org": str(btn.get("org", "")).strip(),
@@ -849,6 +978,7 @@ def bake_static_site():
 
     # Retrieve current structured state from SQLite backend
     data = get_site_data()
+    export_selected_icons(data.get("buttons", []), OUTPUT_DIR)
 
     processed_buttons = []
     # Process configuration buttons and compile individual vCard files
@@ -860,6 +990,9 @@ def bake_static_site():
                     "color": btn.get("color", "#28a745"),
                     "text_color": btn.get("text_color", "#ffffff"),
                     "label": btn["label"],
+                    "icon_filename": (
+                        f"./icon-{btn['icon']}.svg" if btn.get("icon") else None
+                    ),
                     "target_url": normalize_url(btn["url"]),
                 }
             )
@@ -887,6 +1020,9 @@ def bake_static_site():
                     "color": btn.get("color", "#0284c7"),
                     "text_color": btn.get("text_color", "#ffffff"),
                     "label": btn.get("button_label", "Save Contact"),
+                    "icon_filename": (
+                        f"./icon-{btn['icon']}.svg" if btn.get("icon") else None
+                    ),
                     "target_url": f"./{vcard_filename}",
                 }
             )
@@ -972,7 +1108,33 @@ def admin():
     if current_user.password_change_required:
         return redirect(url_for("change_password"))
     data = get_site_data()
-    return render_template("admin.jinja2", data=data, user=current_user)
+    try:
+        icon_catalog = get_icon_catalog_metadata()
+    except Exception as e:
+        app.logger.error(f"Unable to load SVG Logos catalog: {e}")
+        icon_catalog = []
+        flash(
+            "Brand icons are temporarily unavailable. Check the server connection and reload the page.",
+            "danger",
+        )
+    return render_template(
+        "admin.jinja2",
+        data=data,
+        user=current_user,
+        icon_catalog=icon_catalog,
+    )
+
+
+@app.route("/icons/logos/<icon_name>.svg")
+@login_required
+def logo_icon(icon_name):
+    try:
+        svg_bytes = get_icon_svg(icon_name)
+    except (KeyError, ValueError):
+        return ("Unknown brand icon.", 404)
+    from flask import Response
+
+    return Response(svg_bytes, mimetype="image/svg+xml")
 
 
 # Handle password changes for the currently authenticated administrator.
@@ -1059,6 +1221,11 @@ def save():
     except (TypeError, ValueError):
         posted_buttons_for_render = []
 
+    try:
+        icon_catalog = get_icon_catalog_metadata()
+    except Exception:
+        icon_catalog = []
+
     posted_state = {
         "title": title,
         "bio": bio,
@@ -1082,7 +1249,12 @@ def save():
     if theme not in ALLOWED_THEMES:
         flash("Error: Invalid page theme.", "danger")
         return (
-            render_template("admin.jinja2", data=posted_state, user=current_user),
+            render_template(
+                "admin.jinja2",
+                data=posted_state,
+                user=current_user,
+                icon_catalog=icon_catalog,
+            ),
             400,
         )
 
@@ -1094,14 +1266,24 @@ def save():
             "danger",
         )
         return (
-            render_template("admin.jinja2", data=posted_state, user=current_user),
+            render_template(
+                "admin.jinja2",
+                data=posted_state,
+                user=current_user,
+                icon_catalog=icon_catalog,
+            ),
             400,
         )
 
     if error:
         flash(f"Error: {error}", "danger")
         return (
-            render_template("admin.jinja2", data=posted_state, user=current_user),
+            render_template(
+                "admin.jinja2",
+                data=posted_state,
+                user=current_user,
+                icon_catalog=icon_catalog,
+            ),
             400,
         )
 
@@ -1145,7 +1327,12 @@ def save():
         # Raised by store_uploaded_image on invalid/unrecognized image content.
         flash(f"Image upload error: {e}", "danger")
         return (
-            render_template("admin.jinja2", data=posted_state, user=current_user),
+            render_template(
+                "admin.jinja2",
+                data=posted_state,
+                user=current_user,
+                icon_catalog=icon_catalog,
+            ),
             400,
         )
     except Exception as e:
@@ -1157,7 +1344,12 @@ def save():
             "danger",
         )
         return (
-            render_template("admin.jinja2", data=posted_state, user=current_user),
+            render_template(
+                "admin.jinja2",
+                data=posted_state,
+                user=current_user,
+                icon_catalog=icon_catalog,
+            ),
             500,
         )
 

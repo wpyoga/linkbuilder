@@ -88,6 +88,13 @@
       .btn:hover {
         opacity: 0.9;
       }
+     .btn-icon {
+       width: 22px;
+       height: 22px;
+       margin-right: 8px;
+       vertical-align: middle;
+       object-fit: contain;
+     }
     </style>
   </head>
   <body>
@@ -102,7 +109,9 @@
              style="background-color: {{ btn.color }};
                     color: {{ btn.text_color }}"
              target="{{ '_blank' if btn.type == 'link' else '_self' }}"
-             rel="{{ 'noopener noreferrer' if btn.type == 'link' else '' }}">{{ btn.label }}</a>
+             rel="{{ 'noopener noreferrer' if btn.type == 'link' else '' }}">
+            {% if btn.icon_filename %}<img src="{{ btn.icon_filename }}" alt="" class="btn-icon" />{% endif %}
+          {{ btn.label }}</a>
         {% endfor %}
       </div>
     </div>
