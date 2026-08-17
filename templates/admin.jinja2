@@ -252,6 +252,8 @@
                 <div class="color-picker-wrapper">
                   <label style="margin:0;">Button Color:</label>
                   <input type="color" data-field="color" value="{{ btn.color or '#0066cc' }}" />
+                  <label style="margin:0;">Button Text Color:</label>
+                  <input type="color" data-field="text_color" value="{{ btn.text_color or '#ffffff' }}" />
                 </div>
 
                 {% if btn.type == 'link' %}
@@ -385,6 +387,8 @@
             <div class="color-picker-wrapper">
               <label style="margin:0;">Button Color:</label>
               <input type="color" data-field="color" value="#0066cc">
+              <label style="margin:0;">Button Text Color:</label>
+              <input type="color" data-field="text_color" value="#ffffff">
             </div>
             <label>Button Label</label>
             <input type="text" data-field="label" placeholder="e.g. Official Website" oninput="updateSummaryTitle(this)" required>
@@ -417,6 +421,8 @@
             <div class="color-picker-wrapper">
               <label style="margin:0;">Button Color:</label>
               <input type="color" data-field="color" value="#0284c7">
+              <label style="margin:0;">Button Text Color:</label>
+              <input type="color" data-field="text_color" value="#ffffff">
             </div>
             <label>Button Label on Public Page</label>
             <input type="text" data-field="button_label" placeholder="e.g. Save Contact Info" oninput="updateSummaryTitle(this)" required>

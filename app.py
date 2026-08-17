@@ -643,8 +643,11 @@ def validate_buttons_payload(raw_json: str):
 
         btn_type = btn.get("type")
         color = btn.get("color") or "#0066cc"
+        text_color = btn.get("text_color") or "#ffffff"
         if not re.fullmatch(r"#[0-9a-fA-F]{6}", color):
             color = "#0066cc"
+        if not re.fullmatch(r"#[0-9a-fA-F]{6}", text_color):
+            text_color = "#ffffff"
 
         if btn_type == "link":
             label = str(btn.get("label", "")).strip()
@@ -657,6 +660,7 @@ def validate_buttons_payload(raw_json: str):
                 {
                     "type": "link",
                     "color": color,
+                    "text_color": text_color,
                     "label": label,
                     "url": url,
                 }
@@ -672,6 +676,7 @@ def validate_buttons_payload(raw_json: str):
                 {
                     "type": "vcard",
                     "color": color,
+                    "text_color": text_color,
                     "button_label": button_label,
                     "slug": slug,
                     "fn": str(btn.get("fn", "")).strip(),
@@ -761,6 +766,7 @@ def bake_static_site():
                 {
                     "type": "link",
                     "color": btn.get("color", "#0066cc"),
+                    "text_color": btn.get("text_color", "#ffffff"),
                     "label": btn["label"],
                     "target_url": normalize_url(btn["url"]),
                 }
@@ -787,6 +793,7 @@ def bake_static_site():
                 {
                     "type": "vcard",
                     "color": btn.get("color", "#0066cc"),
+                    "text_color": btn.get("text_color", "#ffffff"),
                     "label": btn.get("button_label", "Save Contact"),
                     "target_url": f"./vcard/{vcard_filename}",
                 }

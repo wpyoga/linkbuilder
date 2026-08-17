@@ -109,7 +109,7 @@
           <a
             href="{{ btn.target_url }}"
             class="btn"
-            style="background-color: {{ btn.color }};"
+            style="background-color: {{ btn.color }}; color: {{ btn.text_color }};"
             target="{{ '_blank' if btn.type == 'link' else '_self' }}"
             rel="{{ 'noopener noreferrer' if btn.type == 'link' else '' }}"
           >
