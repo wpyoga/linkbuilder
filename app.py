@@ -137,6 +137,7 @@ def handle_csrf_error(error):
     flash("Your session has expired. Please log in again.", "danger")
     return redirect(url_for("login"))
 
+
 # Resolve default paths for the SQLite database and the static export destination directory.
 # DB_PATH is made absolute immediately (not left as the raw env value / relative default)
 # because sqlite3.connect() resolves a relative path against the CURRENT PROCESS's working
@@ -642,10 +643,10 @@ def validate_buttons_payload(raw_json: str):
             return None, f"Button #{i + 1} is not a JSON object."
 
         btn_type = btn.get("type")
-        color = btn.get("color") or "#0066cc"
+        color = btn.get("color") or ("#28a745" if btn_type == "link" else "#0284c7")
         text_color = btn.get("text_color") or "#ffffff"
         if not re.fullmatch(r"#[0-9a-fA-F]{6}", color):
-            color = "#0066cc"
+            color = "#28a745" if btn_type == "link" else "#0284c7"
         if not re.fullmatch(r"#[0-9a-fA-F]{6}", text_color):
             text_color = "#ffffff"
 
@@ -763,7 +764,7 @@ def bake_static_site():
             processed_buttons.append(
                 {
                     "type": "link",
-                    "color": btn.get("color", "#0066cc"),
+                    "color": btn.get("color", "#28a745"),
                     "text_color": btn.get("text_color", "#ffffff"),
                     "label": btn["label"],
                     "target_url": normalize_url(btn["url"]),
@@ -790,7 +791,7 @@ def bake_static_site():
             processed_buttons.append(
                 {
                     "type": "vcard",
-                    "color": btn.get("color", "#0066cc"),
+                    "color": btn.get("color", "#0284c7"),
                     "text_color": btn.get("text_color", "#ffffff"),
                     "label": btn.get("button_label", "Save Contact"),
                     "target_url": f"./{vcard_filename}",
