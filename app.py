@@ -853,6 +853,56 @@ def admin():
     return render_template("admin.jinja2", data=data, user=current_user)
 
 
+# Handle password changes for the currently authenticated administrator.
+# The current password is required before the new password can be accepted, and the new
+# password is hashed with the same scrypt-based Werkzeug helper used during initialization.
+@app.route("/change-password", methods=["GET", "POST"])
+@login_required
+def change_password():
+    if request.method == "POST":
+        current_password = request.form.get("current_password", "")
+        new_password = request.form.get("new_password", "")
+        confirm_password = request.form.get("confirm_password", "")
+
+        if not check_password_hash(current_user.password_hash, current_password):
+            flash("Current password is incorrect.", "danger")
+            return redirect(url_for("change_password"))
+
+        if not new_password:
+            flash("New password cannot be empty.", "danger")
+            return redirect(url_for("change_password"))
+
+        if new_password != confirm_password:
+            flash("New passwords do not match.", "danger")
+            return redirect(url_for("change_password"))
+
+        if new_password == current_password:
+            flash("New password must be different from the current password.", "danger")
+            return redirect(url_for("change_password"))
+
+        new_password_hash = generate_password_hash(new_password, method="scrypt")
+
+        try:
+            with get_db() as db:
+                db.execute(
+                    "UPDATE users SET password_hash = ? WHERE id = ?",
+                    (new_password_hash, current_user.id),
+                )
+        except Exception as e:
+            app.logger.error(f"Database error during password change: {e}")
+            flash(
+                "A database error occurred while changing the password. Check the server log for details.",
+                "danger",
+            )
+            return redirect(url_for("change_password"))
+
+        current_user.password_hash = new_password_hash
+        flash("Password changed successfully.", "success")
+        return redirect(url_for("admin"))
+
+    return render_template("change_password.jinja2")
+
+
 # Handle configuration modifications, file uploads, and trigger dynamic bakes.
 #
 # Buttons now arrive as a single JSON-encoded field ('buttons_json') built client-side by
