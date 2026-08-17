@@ -2,6 +2,12 @@
 
 Vibe-coded selfhosted Linktree alternative.
 
+General deployment strategy:
+- Admin page deployed inside a VPN or similar internal network, for internal users only, or gated behind some kind of strong authentication service
+- Static site generated as a directory containing plain HTML + assets, which can be served to the wide open Internet on another domain or even another server
+
+This simplifies routing, reduces server load, and increases security.
+
 ## Development Server
 
 Admin site:
