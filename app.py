@@ -32,12 +32,69 @@ import defusedxml.ElementTree as DefusedET
 # Initialize the main Flask application instance
 app = Flask(__name__)
 
-# Configure application secret key using environment variables or fall back to random bytes.
-# NOTE: falling back to os.urandom(24) means sessions do not survive a process restart when
-# FLASK_SECRET_KEY is unset. That's acceptable for the secret key (it only invalidates
-# sessions on restart), but see SUPERADMIN_PASSWORD below, which does NOT get the same
-# "safe to regenerate silently" treatment.
-app.secret_key = os.environ.get("FLASK_SECRET_KEY") or os.urandom(24)
+# Resolve the path to the secret key file. The key file is generated once by `init-db`
+# and read here at every startup. It can be overridden by an env var for deployments that
+# prefer to manage secrets externally (e.g. a secrets manager that injects a file path).
+SECRET_KEY_FILE = os.environ.get(
+    "SECRET_KEY_FILE",
+    os.path.join(os.path.dirname(os.path.abspath(__file__)), ".secret_key"),
+)
+
+# Load the secret key. We deliberately do NOT fall back to os.urandom() here.
+#
+# The silent-random-fallback pattern is a common Flask boilerplate mistake: it looks safe
+# because each process gets "a random key," but across multiple gunicorn workers each worker
+# generates its OWN random key at startup. Worker A signs the session cookie on GET /login;
+# worker B verifies it on POST /login with a different key; the signature fails; the session
+# reads as empty; flask-wtf finds no csrf_token and returns 400 "CSRF session token is
+# missing" -- intermittently, depending on which worker the OS schedules for each request.
+# The symptom is especially confusing because it only reliably surfaces after a wrong-
+# password attempt (the original session cookie stays in play across that retry), while a
+# correct-password first try usually succeeds (login_user issues a new cookie signed by
+# whatever worker handled the POST, making subsequent requests self-consistent).
+#
+# Instead: require a stable key file written by `init-db`. If the file is absent the app
+# refuses to start with a clear message, rather than silently misbehaving under load.
+if os.environ.get("FLASK_SECRET_KEY"):
+    # Explicit env var takes precedence -- useful for deployments that inject secrets via
+    # environment (Docker secrets, systemd credentials, etc.) rather than files.
+    app.secret_key = os.environ["FLASK_SECRET_KEY"]
+elif os.path.exists(SECRET_KEY_FILE):
+    with open(SECRET_KEY_FILE, "rb") as _f:
+        app.secret_key = _f.read().strip()
+    if not app.secret_key:
+        raise RuntimeError(
+            f"Secret key file {SECRET_KEY_FILE!r} exists but is empty. "
+            "Delete it and re-run `flask init-db` to generate a fresh one."
+        )
+else:
+    # Key file doesn't exist yet -- don't raise here. Raising at module level would prevent
+    # `flask init-db` from running (it imports the module to find the CLI command, so a
+    # module-level error blocks the very command that generates the key). Instead, set a
+    # placeholder and enforce in before_request below, which fires on real HTTP requests
+    # but not during CLI commands.
+    app.secret_key = None
+
+
+@app.before_request
+def enforce_secret_key():
+    # Raise here rather than at module level so `flask init-db` can still run to generate
+    # the key file. Once the key is present, this hook reads it and installs it on the
+    # first request, then removes itself so subsequent requests don't pay the file-read
+    # overhead on every call.
+    if app.secret_key is None:
+        if os.path.exists(SECRET_KEY_FILE):
+            # Key was generated (e.g. by init-db running in this same process) after module
+            # load -- pick it up now.
+            with open(SECRET_KEY_FILE, "rb") as _f:
+                app.secret_key = _f.read().strip()
+        else:
+            raise RuntimeError(
+                f"No secret key found. Run `flask init-db` to generate one, or set the "
+                f"FLASK_SECRET_KEY environment variable. "
+                f"Expected key file: {SECRET_KEY_FILE!r}"
+            )
+
 
 # Apply proxy fix middleware to handle HTTP headers correctly behind reverse proxies like Nginx
 app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_prefix=1)
@@ -82,7 +139,9 @@ csrf = CSRFProtect(app)
 # Resolving to an absolute path once here, using this file's own location as the anchor for
 # the relative default, means both commands always agree on the same file regardless of CWD.
 DB_PATH = os.path.abspath(
-    os.environ.get("DB_PATH", os.path.join(os.path.dirname(os.path.abspath(__file__)), "app.db"))
+    os.environ.get(
+        "DB_PATH", os.path.join(os.path.dirname(os.path.abspath(__file__)), "app.db")
+    )
 )
 OUTPUT_DIR = os.path.abspath(os.environ.get("OUTPUT_DIR", "/srv/www/example.com/@info"))
 
@@ -187,6 +246,17 @@ def init_db():
             )
             """)
 
+        # Generate and persist the secret key file if it doesn't already exist. We only
+        # write it once -- if the file is already there (e.g. re-running init-db on an
+        # existing deployment to reset the password or add a new table), we leave it alone
+        # so existing sessions aren't invalidated.
+        if not os.path.exists(SECRET_KEY_FILE):
+            secret_key = secrets.token_hex(32)  # 256-bit key, hex-encoded
+            with open(SECRET_KEY_FILE, "w") as _f:
+                _f.write(secret_key)
+            os.chmod(SECRET_KEY_FILE, 0o600)  # owner read/write only
+            print(f"Generated secret key file: {SECRET_KEY_FILE}")
+
         # Seed initial administrative user into the database if absent. If no password is
         # provided via SUPERADMIN_PASSWORD, generate a random one and print it once so the
         # operator can log in. We deliberately do NOT fall back to a static hardcoded
@@ -222,7 +292,9 @@ def init_db():
                 # rotation flow (out of scope for "simple"); to reset, delete the row from
                 # the users table and re-run init-db to regenerate it.
                 print("=" * 60)
-                print("Generated superadmin password (shown once, not stored anywhere):")
+                print(
+                    "Generated superadmin password (shown once, not stored anywhere):"
+                )
                 print(f"  username: {DEPLOYMENT_SUPERADMIN_USER}")
                 print(f"  password: {password}")
                 print("=" * 60)
@@ -267,7 +339,9 @@ def get_site_data():
             # Defensive fallback: if the stored JSON is ever corrupted, don't crash the
             # entire admin page -- render an empty button list instead so the operator can
             # still log in and fix things.
-            app.logger.error("Corrupt buttons_json in site_config; falling back to empty list.")
+            app.logger.error(
+                "Corrupt buttons_json in site_config; falling back to empty list."
+            )
             buttons = []
 
         # Resolve asset file extensions or apply sensible defaults
@@ -416,7 +490,9 @@ def validate_and_normalize_image(file_storage):
         with Image.open(io.BytesIO(raw_bytes)) as img:
             fmt = img.format
     except UnidentifiedImageError:
-        raise ValueError("File is not a recognized image format (PNG/JPEG/GIF/WEBP/ICO/BMP/SVG).")
+        raise ValueError(
+            "File is not a recognized image format (PNG/JPEG/GIF/WEBP/ICO/BMP/SVG)."
+        )
     except Exception as e:
         raise ValueError(f"Uploaded image failed validation: {e}")
 
@@ -480,6 +556,7 @@ def sanitize_svg(raw_bytes):
     # cosmetic/compatibility, not a security concern, but it keeps the sanitized output
     # closer to ordinary unprefixed SVG that every renderer expects.
     import xml.etree.ElementTree as ET
+
     ET.register_namespace("", "http://www.w3.org/2000/svg")
     return ET.tostring(root, encoding="utf-8")
 
@@ -513,6 +590,7 @@ def store_uploaded_image(db, file_field_name, blob_key, ext_key):
 # ---------------------------------------------------------------------------------------
 # Buttons payload validation (replaces the old parallel-getlist()-array parsing)
 # ---------------------------------------------------------------------------------------
+
 
 def validate_buttons_payload(raw_json: str):
     """
@@ -560,12 +638,14 @@ def validate_buttons_payload(raw_json: str):
                 return None, f"Link button #{i + 1} is missing a label."
             if not url:
                 return None, f"Link button #{i + 1} is missing a URL."
-            validated.append({
-                "type": "link",
-                "color": color,
-                "label": label,
-                "url": url,
-            })
+            validated.append(
+                {
+                    "type": "link",
+                    "color": color,
+                    "label": label,
+                    "url": url,
+                }
+            )
 
         elif btn_type == "vcard":
             button_label = str(btn.get("button_label", "")).strip() or "Save Contact"
@@ -573,18 +653,20 @@ def validate_buttons_payload(raw_json: str):
             if slug in seen_slugs:
                 return None, f"Duplicate vCard slug '{slug}' -- slugs must be unique."
             seen_slugs.add(slug)
-            validated.append({
-                "type": "vcard",
-                "color": color,
-                "button_label": button_label,
-                "slug": slug,
-                "fn": str(btn.get("fn", "")).strip(),
-                "org": str(btn.get("org", "")).strip(),
-                "title": str(btn.get("title", "")).strip(),
-                "email": str(btn.get("email", "")).strip(),
-                "phone": str(btn.get("phone", "")).strip(),
-                "url": str(btn.get("url", "")).strip(),
-            })
+            validated.append(
+                {
+                    "type": "vcard",
+                    "color": color,
+                    "button_label": button_label,
+                    "slug": slug,
+                    "fn": str(btn.get("fn", "")).strip(),
+                    "org": str(btn.get("org", "")).strip(),
+                    "title": str(btn.get("title", "")).strip(),
+                    "email": str(btn.get("email", "")).strip(),
+                    "phone": str(btn.get("phone", "")).strip(),
+                    "url": str(btn.get("url", "")).strip(),
+                }
+            )
 
         else:
             return None, f"Button #{i + 1} has an unrecognized type: {btn_type!r}"
@@ -595,6 +677,7 @@ def validate_buttons_payload(raw_json: str):
 # ---------------------------------------------------------------------------------------
 # Static site generation
 # ---------------------------------------------------------------------------------------
+
 
 # Clear everything INSIDE the output directory, without removing the directory itself.
 # OUTPUT_DIR is likely a Docker bind-mount or named-volume mount point in deployment (per
@@ -714,6 +797,7 @@ def bake_static_site():
 # ---------------------------------------------------------------------------------------
 # Routes
 # ---------------------------------------------------------------------------------------
+
 
 # Handle login form displays and authentication post requests. This form's CSRF token is
 # enforced by CSRFProtect like every other mutating route in the app -- see login.jinja2
@@ -845,7 +929,10 @@ def save():
         # Log the real exception server-side; show the admin a generic message rather than
         # raw exception text (which could include SQL fragments or internal paths).
         app.logger.error(f"Database error during save: {e}")
-        flash("A database error occurred while saving. Check the server log for details.", "danger")
+        flash(
+            "A database error occurred while saving. Check the server log for details.",
+            "danger",
+        )
         return (
             render_template("admin.jinja2", data=posted_state, user=current_user),
             500,
@@ -857,7 +944,10 @@ def save():
         flash("Settings saved and static site baked successfully!", "success")
     except Exception as e:
         app.logger.error(f"Error baking static site: {e}")
-        flash("Settings were saved, but baking the static site failed. Check the server log.", "danger")
+        flash(
+            "Settings were saved, but baking the static site failed. Check the server log.",
+            "danger",
+        )
 
     return redirect(url_for("admin"))
 
