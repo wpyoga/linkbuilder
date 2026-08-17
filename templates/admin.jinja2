@@ -84,6 +84,18 @@
         cursor: pointer;
         background: transparent;
       }
+      .color-reset-btn {
+        background: #e2e8f0;
+        color: #334155;
+        border: none;
+        padding: 4px 8px;
+        border-radius: 4px;
+        cursor: pointer;
+        font-size: 0.8rem;
+      }
+      .color-reset-btn:hover {
+        background: #cbd5e1;
+      }
       .control-btns {
         display: flex;
         gap: 5px;
@@ -251,9 +263,11 @@
               <div class="block-content">
                 <div class="color-picker-wrapper">
                   <label style="margin:0;">Button Color:</label>
-                  <input type="color" data-field="color" value="{{ btn.color or '#0066cc' }}" />
+                  <input type="color" data-field="color" value="{{ btn.color or ('#0066cc' if btn.type == 'link' else '#0284c7') }}" data-default="{{ '#0066cc' if btn.type == 'link' else '#0284c7' }}" />
+                  <button type="button" class="color-reset-btn" onclick="resetColor(this)">Default</button>
                   <label style="margin:0;">Button Text Color:</label>
-                  <input type="color" data-field="text_color" value="{{ btn.text_color or '#ffffff' }}" />
+                  <input type="color" data-field="text_color" value="{{ btn.text_color or '#ffffff' }}" data-default="#ffffff" />
+                  <button type="button" class="color-reset-btn" onclick="resetColor(this)">Default</button>
                 </div>
 
                 {% if btn.type == 'link' %}
@@ -333,6 +347,11 @@
         return true;
       }
 
+      function resetColor(button) {
+        const colorInput = button.previousElementSibling;
+        colorInput.value = colorInput.dataset.default;
+      }
+
       function updateSummaryTitle(inputEl) {
         const block = inputEl.closest('.button-block');
         const titleSpan = block.querySelector('.block-title');
@@ -386,9 +405,11 @@
           <div class="block-content">
             <div class="color-picker-wrapper">
               <label style="margin:0;">Button Color:</label>
-              <input type="color" data-field="color" value="#0066cc">
+              <input type="color" data-field="color" value="#0066cc" data-default="#0066cc">
+              <button type="button" class="color-reset-btn" onclick="resetColor(this)">Default</button>
               <label style="margin:0;">Button Text Color:</label>
-              <input type="color" data-field="text_color" value="#ffffff">
+              <input type="color" data-field="text_color" value="#ffffff" data-default="#ffffff">
+              <button type="button" class="color-reset-btn" onclick="resetColor(this)">Default</button>
             </div>
             <label>Button Label</label>
             <input type="text" data-field="label" placeholder="e.g. Official Website" oninput="updateSummaryTitle(this)" required>
@@ -420,9 +441,11 @@
           <div class="block-content">
             <div class="color-picker-wrapper">
               <label style="margin:0;">Button Color:</label>
-              <input type="color" data-field="color" value="#0284c7">
+              <input type="color" data-field="color" value="#0284c7" data-default="#0284c7">
+              <button type="button" class="color-reset-btn" onclick="resetColor(this)">Default</button>
               <label style="margin:0;">Button Text Color:</label>
-              <input type="color" data-field="text_color" value="#ffffff">
+              <input type="color" data-field="text_color" value="#ffffff" data-default="#ffffff">
+              <button type="button" class="color-reset-btn" onclick="resetColor(this)">Default</button>
             </div>
             <label>Button Label on Public Page</label>
             <input type="text" data-field="button_label" placeholder="e.g. Save Contact Info" oninput="updateSummaryTitle(this)" required>
