@@ -31,6 +31,36 @@
         border-radius: 4px;
         box-sizing: border-box;
       }
+      .password-field {
+        position: relative;
+      }
+      .password-field input {
+        padding-right: 44px;
+      }
+      .password-toggle {
+        position: absolute;
+        top: 5px;
+        right: 0;
+        width: 40px;
+        height: 42px;
+        margin: 0;
+        padding: 0;
+        background: transparent;
+        color: #475569;
+        border: 0;
+        border-radius: 0 4px 4px 0;
+        cursor: pointer;
+      }
+      .password-toggle:hover,
+      .password-toggle:focus-visible {
+        color: #0066cc;
+      }
+      .password-toggle svg {
+        width: 20px;
+        height: 20px;
+        display: block;
+        margin: auto;
+      }
       button {
         width: 100%;
         padding: 10px;
@@ -70,11 +100,28 @@
         <label>Username</label>
         <input type="text" name="username" required autofocus placeholder="Username" />
 
-        <label>Password</label>
-        <input type="password" name="password" required placeholder="Password" />
+        <label for="login-password">Password</label>
+        <div class="password-field">
+          <input id="login-password" type="password" name="password" required placeholder="Password" />
+          <button type="button" class="password-toggle" aria-label="Show password" aria-pressed="false" onclick="togglePasswordVisibility(this)">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6S2 12 2 12Z" />
+              <circle cx="12" cy="12" r="2.5" />
+            </svg>
+          </button>
+        </div>
 
         <button type="submit">Log In</button>
       </form>
     </div>
+    <script>
+      function togglePasswordVisibility(toggleButton) {
+        const input = toggleButton.parentElement.querySelector("input");
+        const visible = input.type === "text";
+        input.type = visible ? "password" : "text";
+        toggleButton.setAttribute("aria-label", visible ? "Show password" : "Hide password");
+        toggleButton.setAttribute("aria-pressed", String(!visible));
+      }
+    </script>
   </body>
 </html>
