@@ -1,4 +1,9 @@
+# from .gitignore
 venv
 pub
+**/*.orig
+**/*.rej
+
+# docker-specific
 __pycache__
 .git
