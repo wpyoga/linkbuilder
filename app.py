@@ -331,6 +331,15 @@ def init_db_command():
 
 
 # Helper function to query complete site state from SQLite storage.
+DEFAULT_LIGHT_BACKGROUND = "#f8fafc"
+DEFAULT_DARK_BACKGROUND = "#0f172a"
+ALLOWED_THEMES = {"auto", "light", "dark"}
+
+
+def validate_hex_color(value: str) -> bool:
+    return bool(re.fullmatch(r"#[0-9a-fA-F]{6}", (value or "").strip()))
+
+
 def get_site_data():
     with get_db() as db:
         # Fetch configuration key-value mappings along with binary presence indicators
@@ -371,7 +380,21 @@ def get_site_data():
         return {
             "title": config.get("title", ""),
             "bio": config.get("bio", ""),
-            "theme": config.get("theme", "auto"),
+            "theme": (
+                config.get("theme", "auto")
+                if config.get("theme", "auto") in ALLOWED_THEMES
+                else "auto"
+            ),
+            "background_light": (
+                config.get("background_light")
+                if validate_hex_color(config.get("background_light", ""))
+                else DEFAULT_LIGHT_BACKGROUND
+            ),
+            "background_dark": (
+                config.get("background_dark")
+                if validate_hex_color(config.get("background_dark", ""))
+                else DEFAULT_DARK_BACKGROUND
+            ),
             "has_favicon": has_favicon,
             "has_org_logo": has_org_logo,
             "favicon_filename": f"favicon{fav_ext}",
@@ -873,6 +896,8 @@ def bake_static_site():
         "title": data["title"],
         "bio": data["bio"],
         "theme": data.get("theme", "auto"),
+        "background_light": data.get("background_light", DEFAULT_LIGHT_BACKGROUND),
+        "background_dark": data.get("background_dark", DEFAULT_DARK_BACKGROUND),
         "favicon_filename": favicon_filename,
         "org_logo_filename": logo_filename,
         "buttons": processed_buttons,
@@ -1016,6 +1041,12 @@ def save():
     title = request.form.get("site_title", "")
     bio = request.form.get("bio", "")
     theme = request.form.get("theme", "auto")
+    background_light = request.form.get(
+        "background_light", DEFAULT_LIGHT_BACKGROUND
+    ).strip()
+    background_dark = request.form.get(
+        "background_dark", DEFAULT_DARK_BACKGROUND
+    ).strip()
     raw_buttons_json = request.form.get("buttons_json", "[]")
 
     parsed_buttons, error = validate_buttons_payload(raw_buttons_json)
@@ -1032,6 +1063,8 @@ def save():
         "title": title,
         "bio": bio,
         "theme": theme,
+        "background_light": background_light,
+        "background_dark": background_dark,
         "buttons": posted_buttons_for_render,
     }
 
@@ -1043,6 +1076,25 @@ def save():
                 user=current_user,
                 validation_errors=error,
             ),
+            400,
+        )
+
+    if theme not in ALLOWED_THEMES:
+        flash("Error: Invalid page theme.", "danger")
+        return (
+            render_template("admin.jinja2", data=posted_state, user=current_user),
+            400,
+        )
+
+    if not validate_hex_color(background_light) or not validate_hex_color(
+        background_dark
+    ):
+        flash(
+            "Error: Page background colors must be six-digit hexadecimal colors.",
+            "danger",
+        )
+        return (
+            render_template("admin.jinja2", data=posted_state, user=current_user),
             400,
         )
 
@@ -1067,6 +1119,14 @@ def save():
             db.execute(
                 "INSERT OR REPLACE INTO site_config (key, value) VALUES ('theme', ?)",
                 (theme,),
+            )
+            db.execute(
+                "INSERT OR REPLACE INTO site_config (key, value) VALUES ('background_light', ?)",
+                (background_light,),
+            )
+            db.execute(
+                "INSERT OR REPLACE INTO site_config (key, value) VALUES ('background_dark', ?)",
+                (background_dark,),
             )
             db.execute(
                 "INSERT OR REPLACE INTO site_config (key, value) VALUES ('buttons_json', ?)",

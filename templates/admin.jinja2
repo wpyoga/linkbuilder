@@ -289,10 +289,23 @@
         <label>Page Theme</label>
         <select name="theme">
           <option value="auto" {% if data.theme=='auto' %}selected{% endif %}>Auto (Match Visitor OS/Browser Dark Mode)</option>
-          <option value="light" {% if data.theme=='light' %}selected{% endif %}>Light (Solid White)</option>
-          <option value="gray" {% if data.theme=='gray' %}selected{% endif %}>Gray (Light Slate)</option>
-          <option value="dark" {% if data.theme=='dark' %}selected{% endif %}>Dark (Night Mode)</option>
+          <option value="light" {% if data.theme=='light' %}selected{% endif %}>Light</option>
+          <option value="dark" {% if data.theme=='dark' %}selected{% endif %}>Dark</option>
         </select>
+        <div class="color-picker-wrapper">
+          <label style="margin:0;">Light Background:</label>
+          <input type="color"
+                 name="background_light"
+                 value="{{ data.background_light or '#f8fafc' }}"
+                 data-default="#f8fafc" />
+          <button type="button" class="color-reset-btn" onclick="resetColor(this)">Default</button>
+          <label style="margin:0;">Dark Background:</label>
+          <input type="color"
+                 name="background_dark"
+                 value="{{ data.background_dark or '#0f172a' }}"
+                 data-default="#0f172a" />
+          <button type="button" class="color-reset-btn" onclick="resetColor(this)">Default</button>
+        </div>
         <label>Favicon Image (.ico, .png, .svg)</label>
         <input type="file" name="favicon" accept="image/*,.ico" />
         {% if data.has_favicon %}
