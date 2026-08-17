@@ -6,23 +6,31 @@ ENV PYTHONUNBUFFERED=1
 
 WORKDIR /app
 
-# Install dependencies first to leverage Docker layer caching
+# Maximize the use of Docker layer caching
+# Work on seldom-changed outputs first
+
+# Install dependencies
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
+# Copy entrypoint script
+COPY deployment/entrypoint.sh /
+
 # Copy application source code
-COPY app.py .
 COPY templates templates
+COPY app.py .
 
 # Create a non-root user for security
+# These commands are instant, so just combine everything in one RUN directive
+# The chown commands needs to be run after copying app.py anyway
 RUN useradd -m appuser \
     && mkdir /app/data \
     && mkdir /app/pub \
-    && chown -R appuser:appuser /app
+    && chown -R appuser:appuser /app \
+    && chmod +x /entrypoint.sh
 
 # Switch to non-root user for security
-# This can be overridden with the Docker Compose user: directive
 USER appuser
 
 # Run Gunicorn binding to all interfaces on port 8000
-CMD ["gunicorn", "--bind", "0.0.0.0:8000", "--workers", "2", "--threads", "4", "app:app"]
+CMD ["/entrypoint.sh"]

@@ -28,7 +28,8 @@ python3 -m venv venv
 DB_PATH="/var/lib/linkbuilder/data.db" \
 OUTPUT_DIR="/var/www/html/mysite" \
 SUPERADMIN_PASSWORD="MySecurePassword123!" \
-./venv/bin/python3 app.py
+( ./venv/bin/flask init-db
+  ./venv/bin/python3 app.py )
 ```
 
 Flask:
@@ -38,8 +39,9 @@ python3 -m venv venv
 ./venv/bin/pip3 install -r requirements.txt
 DB_PATH="/var/lib/linkbuilder/data.db" \
 OUTPUT_DIR="/var/www/html/mysite" \
-SUPERADMIN_PASSWORD="MySecurePassword123!" \
-./venv/bin/flask run
+SUPERADMIN_PASSWORD="MySecurePassword123!"; \
+( ./venv/bin/flask init-db
+  ./venv/bin/flask run )
 ```
 
 Gunicorn:
@@ -50,7 +52,8 @@ python3 -m venv venv
 DB_PATH="/var/lib/linkbuilder/data.db" \
 OUTPUT_DIR="/var/www/html/mysite" \
 SUPERADMIN_PASSWORD="MySecurePassword123!" \
-./venv/bin/gunicorn --bind 0.0.0.0:8000 --workers 2 --threads 4 app:app
+( ./venv/bin/flask init-db
+  ./venv/bin/gunicorn --bind 0.0.0.0:8000 --workers 2 --threads 4 app:app )
 ```
 
 Systemd:
@@ -77,4 +80,13 @@ To build the image:
 
 ```sh
 docker build -f deployment/Dockerfile -t linkbuilder .
+```
+
+### Development
+
+This one-liner is useful for launching successive cached builds, with data volumes
+wiped in between.
+
+```sh
+docker compose -f deployment/docker-compose.yaml -p linkbuilder up --build; docker compose -f deployment/docker-compose.yaml -p linkbuilder down
 ```
