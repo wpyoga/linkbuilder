@@ -1,50 +1,30 @@
-<!DOCTYPE html>
-<html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <title>Linkbuilder Admin</title>
-    <style>
-      body {
-        font-family: system-ui, sans-serif;
+{% extends "base.jinja2" %}
+{% block title %}Linkbuilder Admin{% endblock %}
+{% block extra_head %}
+  <style>
+    /* Admin-specific styles that don't belong in base */
+    .admin-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 20px;
         max-width: 700px;
         margin: 20px auto;
         padding: 0 15px;
-        background: #f4f4f9;
-        color: #333;
-      }
-      .card {
-        background: #fff;
-        padding: 20px;
-        border-radius: 8px;
-        box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
-        margin-bottom: 20px;
-      }
-      label {
-        font-weight: bold;
-        display: block;
-        margin-top: 10px;
-        font-size: 0.9rem;
-      }
-      input[type="text"],
-      input[type="email"],
-      select,
-      textarea,
-      input[type="file"] {
-        width: 100%;
-        padding: 8px;
-        margin-top: 5px;
-        box-sizing: border-box;
-        border: 1px solid #ccc;
-        border-radius: 4px;
-      }
-      .button-block {
+    }
+    .admin-container {
+        max-width: 700px;
+        margin: 0 auto 20px auto;
+        padding: 0 15px;
+    }
+    .button-block {
         background: #fff;
         border: 1px solid #ddd;
         border-radius: 6px;
         margin-bottom: 12px;
         box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
-      }
-      summary {
+    }
+    summary {
         padding: 12px 15px;
         font-weight: bold;
         cursor: pointer;
@@ -54,37 +34,34 @@
         background: #fdfdfd;
         border-radius: 6px;
         user-select: none;
-      }
-      .block-content {
-        padding: 15px;
-        border-top: 1px solid #eee;
-      }
-      .nested-vcard-details {
+    }
+    .block-content { padding: 15px; border-top: 1px solid #eee; }
+    .nested-vcard-details {
         margin-top: 12px;
         border: 1px dashed #cbd5e1;
         border-radius: 6px;
         background: #f8fafc;
-      }
-      .nested-vcard-details summary {
+    }
+    .nested-vcard-details summary {
         font-size: 0.85rem;
         color: #475569;
         background: #f1f5f9;
         padding: 8px 12px;
-      }
-      .color-picker-wrapper {
+    }
+    .color-picker-wrapper {
         display: flex;
         align-items: center;
         gap: 10px;
         margin-top: 8px;
-      }
-      .color-picker-wrapper input[type="color"] {
+    }
+    .color-picker-wrapper input[type="color"] {
         border: none;
         width: 32px;
         height: 32px;
         cursor: pointer;
         background: transparent;
-      }
-      .color-reset-btn {
+    }
+    .color-reset-btn {
         background: #e2e8f0;
         color: #334155;
         border: none;
@@ -92,85 +69,40 @@
         border-radius: 4px;
         cursor: pointer;
         font-size: 0.8rem;
-      }
-      .color-reset-btn:hover {
-        background: #cbd5e1;
-      }
-      .control-btns {
-        display: flex;
-        gap: 5px;
-      }
-      .control-btns button {
+    }
+    .control-btns { display: flex; gap: 5px; }
+    .control-btns button {
         background: #e2e8f0;
         color: #334155;
         border: none;
         padding: 4px 8px;
         border-radius: 4px;
-        cursor: pointer;
         font-size: 0.8rem;
-      }
-      .control-btns button:hover {
-        background: #cbd5e1;
-      }
-      .control-btns button.btn-del {
-        background: #fee2e2;
-        color: #991b1b;
-      }
-      .control-btns button.btn-del:hover {
-        background: #fca5a5;
-      }
-      .add-actions {
-        display: flex;
-        gap: 10px;
-        margin-top: 15px;
-      }
-      .btn-add {
+    }
+    .control-btns button.btn-del { background: #fee2e2; color: #991b1b; }
+    .add-actions { display: flex; gap: 10px; margin-top: 15px; }
+    .btn-add {
         background: #28a745;
         color: #fff;
         border: none;
         padding: 10px 15px;
         border-radius: 4px;
-        cursor: pointer;
         font-weight: 500;
-      }
-      .btn-add-vcard {
-        background: #0284c7;
-      }
-      button.submit-btn {
+    }
+    .btn-add-vcard { background: #0284c7; }
+    .submit-btn {
         background: #0066cc;
         color: #fff;
         border: none;
         padding: 12px;
         border-radius: 6px;
-        cursor: pointer;
         font-size: 1.1em;
         width: 100%;
         margin-top: 10px;
-      }
-      .alert {
-        padding: 10px;
-        border-radius: 4px;
-        margin-bottom: 15px;
-      }
-      .alert-success {
-        background: #d4edda;
-        color: #155724;
-      }
-      .alert-danger {
-        background: #f8d7da;
-        color: #721c24;
-      }
-      .field-error {
-        border-color: #dc2626 !important;
-        background: #fef2f2;
-      }
-      .field-error-message {
-        margin-top: 4px;
-        color: #b91c1c;
-        font-size: 0.85rem;
-        font-weight: 500;
-      }
-      .validation-summary {
+    }
+    .field-error { border-color: #dc2626 !important; background: #fef2f2; }
+    .field-error-message { margin-top: 4px; color: #b91c1c; font-size: 0.85rem; font-weight: 500; }
+    .validation-summary {
         padding: 10px;
         border: 1px solid #fca5a5;
         border-radius: 4px;
@@ -178,42 +110,20 @@
         background: #fef2f2;
         color: #991b1b;
         font-weight: 600;
-      }
-      .type-tag {
+    }
+    .type-tag {
         font-size: 0.75rem;
         padding: 2px 6px;
         border-radius: 4px;
         text-transform: uppercase;
         margin-left: 8px;
-      }
-      .tag-link {
-        background: #e0f2fe;
-        color: #0369a1;
-      }
-      .tag-vcard {
-        background: #f0fdf4;
-        color: #15803d;
-      }
-      .slug-preview {
-        display: block;
-        margin-top: 4px;
-        font-size: 0.85rem;
-        color: #64748b;
-      }
-      .slug-preview code {
-        color: #0284c7;
-        font-weight: bold;
-      }
-      .icon-picker-control {
-        display: flex;
-        align-items: center;
-        gap: 10px;
-        margin-top: 8px;
-      }
-      .icon-picker-control label {
-        margin: 0;
-      }
-      .icon-picker-button {
+    }
+    .tag-link { background: #e0f2fe; color: #0369a1; }
+    .tag-vcard { background: #f0fdf4; color: #15803d; }
+    .slug-preview { display: block; margin-top: 4px; font-size: 0.85rem; color: #64748b; }
+    .slug-preview code { color: #0284c7; font-weight: bold; }
+    .icon-picker-control { display: flex; align-items: center; gap: 10px; margin-top: 8px; }
+    .icon-picker-button {
         display: inline-flex;
         align-items: center;
         gap: 6px;
@@ -223,19 +133,11 @@
         border-radius: 4px;
         background: #f8fafc;
         color: #334155;
-        cursor: pointer;
-        font: inherit;
-      }
-      .icon-picker-button:hover {
-        background: #f1f5f9;
-      }
-      .icon-picker-button img {
-        width: 20px;
-        height: 20px;
-        object-fit: contain;
-        flex: 0 0 20px;
-      }
-      .icon-picker-modal {
+    }
+    .icon-picker-button img { width: 20px; height: 20px; object-fit: contain; }
+    
+    /* Modal Styles */
+    .icon-picker-modal {
         display: none;
         position: fixed;
         inset: 0;
@@ -245,102 +147,58 @@
         align-items: center;
         justify-content: center;
         background: rgba(15, 23, 42, 0.55);
-      }
-      .icon-picker-modal.open {
-        display: flex;
-      }
-      .icon-picker-dialog {
+    }
+    .icon-picker-modal.open { display: flex; }
+    .icon-picker-dialog {
         display: flex;
         flex-direction: column;
         width: min(620px, 100%);
         max-height: min(720px, 90vh);
         background: #fff;
         border-radius: 8px;
-        box-shadow: 0 12px 32px rgba(15, 23, 42, 0.25);
         overflow: hidden;
-      }
-      .icon-picker-header {
+    }
+    .icon-picker-header {
         display: flex;
         align-items: center;
         gap: 10px;
         padding: 15px;
         border-bottom: 1px solid #e2e8f0;
-      }
-      .icon-picker-header h3 {
-        margin: 0;
-        font-size: 1rem;
-        white-space: nowrap;
-      }
-      .icon-picker-header input[type="search"] {
-        flex: 1;
-        width: auto;
-        margin-top: 0;
-      }
-      .icon-picker-results {
+    }
+    .icon-picker-results {
         display: grid;
         grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
         gap: 8px;
         padding: 15px;
         overflow-y: auto;
-      }
-      .icon-result {
+    }
+    .icon-result {
         display: flex;
         flex-direction: column;
         align-items: center;
-        justify-content: center;
         gap: 6px;
         min-height: 80px;
         padding: 8px;
         border: 1px solid #e2e8f0;
         border-radius: 6px;
         background: #fff;
-        color: #334155;
         cursor: pointer;
-        font: inherit;
-      }
-      .icon-result:hover {
-        background: #f8fafc;
-        border-color: #cbd5e1;
-      }
-      .icon-result img {
-        width: 24px;
-        height: 24px;
-        object-fit: contain;
-      }
-      .icon-result span {
-        max-width: 100%;
-        overflow: hidden;
-        text-overflow: ellipsis;
-        white-space: nowrap;
-        font-size: 0.8rem;
-      }
-      .icon-result.none {
-        min-height: 42px;
-      }
-      .icon-picker-empty {
-        grid-column: 1 / -1;
-        padding: 20px;
-        color: #64748b;
-        text-align: center;
-      }
-    </style>
-  </head>
-  <body>
-    <div style="display: flex;
-                justify-content: space-between;
-                align-items: center;
-                margin-bottom: 20px">
-      <h2>Linkbuilder Admin</h2>
-      <span style="font-size: 0.9rem">
-        Logged in as <strong>{{ user.username }}</strong> |
-        <a href="/change-password" style="color: #475569; text-decoration: none">Change Password</a> |
-        <a href="/logout" style="color: #d9534f; text-decoration: none">Logout</a>
-      </span>
-    </div>
-    {% set messages = get_flashed_messages(with_categories=true) %}
-    {% if messages %}
-      {% for category, message in messages %}<div class="alert alert-{{ category }}">{{ message }}</div>{% endfor %}
-    {% endif %}
+    }
+    .icon-result:hover { background: #f8fafc; }
+    .icon-result img { width: 24px; height: 24px; object-fit: contain; }
+    .icon-result span { font-size: 0.8rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
+  </style>
+{% endblock %}
+{% block content %}
+  <div class="admin-header">
+    <h2>Linkbuilder Admin</h2>
+    <span style="font-size: 0.9rem">
+      Logged in as <strong>{{ user.username }}</strong> |
+      <a href="/change-password" style="color: #475569; text-decoration: none">Change Password</a> |
+      <a href="/logout" style="color: #d9534f; text-decoration: none">Logout</a>
+    </span>
+  </div>
+  <div class="admin-container">
     {% if validation_errors %}
       <div class="validation-summary">Please correct the highlighted fields below.</div>
     {% endif %}
@@ -349,7 +207,6 @@
           enctype="multipart/form-data"
           id="admin-form"
           onsubmit="return serializeButtonsBeforeSubmit();">
-      {# CSRF token required by flask-wtf's CSRFProtect #}
       <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
       <input type="hidden" name="buttons_json" id="buttons-json-field" value="" />
       <div class="card">
@@ -533,34 +390,37 @@
       </div>
       <button type="submit" class="submit-btn">Save & Bake Static Site</button>
     </form>
-    <div id="icon-picker-modal"
-         class="icon-picker-modal"
-         onclick="handleIconPickerBackdrop(event)">
-      <div class="icon-picker-dialog"
-           role="dialog"
-           aria-modal="true"
-           aria-labelledby="icon-picker-title">
-        <div class="icon-picker-header">
-          <h3 id="icon-picker-title">Choose a brand icon</h3>
-          <input id="icon-picker-search"
-                 type="search"
-                 placeholder="Search brand icons..."
-                 autocomplete="off" />
-          <button type="button" class="color-reset-btn" onclick="closeIconPicker()">Close</button>
-        </div>
-        <div id="icon-picker-results" class="icon-picker-results"></div>
+  </div>
+  <!-- Icon Picker Modal -->
+  <div id="icon-picker-modal"
+       class="icon-picker-modal"
+       onclick="handleIconPickerBackdrop(event)">
+    <div class="icon-picker-dialog"
+         role="dialog"
+         aria-modal="true"
+         aria-labelledby="icon-picker-title">
+      <div class="icon-picker-header">
+        <h3 id="icon-picker-title">Choose a brand icon</h3>
+        <input id="icon-picker-search"
+               type="search"
+               placeholder="Search brand icons..."
+               autocomplete="off" />
+        <button type="button" class="color-reset-btn" onclick="closeIconPicker()">Close</button>
       </div>
+      <div id="icon-picker-results" class="icon-picker-results"></div>
     </div>
-    <script>
-      const iconCatalog = {{ icon_catalog|default([])|tojson }};
-      let activeIconPickerButton = null;
+  </div>
+{% endblock %}
+{% block scripts %}
+  <script>
+    const iconCatalog = {{ icon_catalog|default([])|tojson }};
+    let activeIconPickerButton = null;
 
-      // Use Flask's url_for to generate the correct static path
-      function iconAssetUrl(iconId) {
+    function iconAssetUrl(iconId) {
         return "{{ url_for('static', filename='icons/') }}" + encodeURIComponent(iconId) + ".svg";
-      }
+    }
 
-      function openIconPicker(button) {
+    function openIconPicker(button) {
         activeIconPickerButton = button;
         const modal = document.getElementById("icon-picker-modal");
         const search = document.getElementById("icon-picker-search");
@@ -568,67 +428,65 @@
         search.value = "";
         renderIconPickerResults("");
         search.focus();
-      }
+    }
 
-      function closeIconPicker() {
+    function closeIconPicker() {
         document.getElementById("icon-picker-modal").classList.remove("open");
         activeIconPickerButton = null;
-      }
+    }
 
-      function handleIconPickerBackdrop(event) {
+    function handleIconPickerBackdrop(event) {
         if (event.target === event.currentTarget) closeIconPicker();
-      }
+    }
 
-      function renderIconPickerResults(query) {
+    function renderIconPickerResults(query) {
         const results = document.getElementById("icon-picker-results");
         const normalized = query.trim().toLowerCase();
         const matches = iconCatalog
-          .filter(
-            icon =>
-              !normalized ||
-              icon.name.toLowerCase().includes(normalized) ||
-              icon.id.includes(normalized)
-          )
-          .slice(0, 60);
+            .filter(icon => !normalized || icon.name.toLowerCase().includes(normalized) || icon.id.includes(normalized))
+            .slice(0, 60);
 
         results.replaceChildren();
 
         const none = document.createElement("button");
         none.type = "button";
-        none.className = "icon-result none";
+        none.className = "icon-result";
         none.textContent = "No icon";
         none.onclick = () => selectIcon("");
         results.appendChild(none);
 
         if (!matches.length) {
-          const empty = document.createElement("div");
-          empty.className = "icon-picker-empty";
-          empty.textContent = "No matching brand icons.";
-          results.appendChild(empty);
-          return;
+            const empty = document.createElement("div");
+            empty.style.gridColumn = "1 / -1";
+            empty.style.padding = "20px";
+            empty.style.color = "#64748b";
+            empty.style.textAlign = "center";
+            empty.textContent = "No matching brand icons.";
+            results.appendChild(empty);
+            return;
         }
 
         matches.forEach(icon => {
-          const item = document.createElement("button");
-          item.type = "button";
-          item.className = "icon-result";
-          item.title = icon.name;
-          item.onclick = () => selectIcon(icon.id);
+            const item = document.createElement("button");
+            item.type = "button";
+            item.className = "icon-result";
+            item.title = icon.name;
+            item.onclick = () => selectIcon(icon.id);
 
-          const image = document.createElement("img");
-          image.src = iconAssetUrl(icon.id);
-          image.alt = "";
-          image.loading = "lazy";
-          item.appendChild(image);
+            const image = document.createElement("img");
+            image.src = iconAssetUrl(icon.id);
+            image.alt = "";
+            image.loading = "lazy";
+            item.appendChild(image);
 
-          const label = document.createElement("span");
-          label.textContent = icon.name;
-          item.appendChild(label);
-          results.appendChild(item);
+            const label = document.createElement("span");
+            label.textContent = icon.name;
+            item.appendChild(label);
+            results.appendChild(item);
         });
-      }
+    }
 
-      function selectIcon(iconId) {
+    function selectIcon(iconId) {
         if (!activeIconPickerButton) return;
         const block = activeIconPickerButton.closest(".button-block");
         const field = block.querySelector('[data-field="icon"]');
@@ -637,176 +495,175 @@
 
         field.value = iconId;
         if (iconId) {
-          image.src = iconAssetUrl(iconId);
-          image.style.display = "";
-          const match = iconCatalog.find(icon => icon.id === iconId);
-          label.textContent = match ? match.name : iconId;
+            image.src = iconAssetUrl(iconId);
+            image.style.display = "";
+            const match = iconCatalog.find(icon => icon.id === iconId);
+            label.textContent = match ? match.name : iconId;
         } else {
-          image.removeAttribute("src");
-          image.style.display = "none";
-          label.textContent = "No icon";
+            image.removeAttribute("src");
+            image.style.display = "none";
+            label.textContent = "No icon";
         }
         closeIconPicker();
-      }
+    }
 
-      document.getElementById("icon-picker-search").addEventListener("input", event => renderIconPickerResults(event.target.value));
-      document.addEventListener("keydown", event => { if (event.key === "Escape") closeIconPicker(); });
+    document.getElementById("icon-picker-search").addEventListener("input", event => renderIconPickerResults(event.target.value));
+    document.addEventListener("keydown", event => { if (event.key === "Escape") closeIconPicker(); });
 
-      function collectButtonsAsJson() {
+    function collectButtonsAsJson() {
         const blocks = document.querySelectorAll("#buttons-container .button-block");
         const buttons = [];
         blocks.forEach((block) => {
-          const type = block.dataset.btnType;
-          const fields = {};
-          block.querySelectorAll("[data-field]").forEach((input) => {
-            fields[input.dataset.field] = input.value;
-          });
-          buttons.push(Object.assign({ type }, fields));
+            const type = block.dataset.btnType;
+            const fields = {};
+            block.querySelectorAll("[data-field]").forEach((input) => {
+                fields[input.dataset.field] = input.value;
+            });
+            buttons.push(Object.assign({ type }, fields));
         });
         return JSON.stringify(buttons);
-      }
+    }
 
-      function serializeButtonsBeforeSubmit() {
+    function serializeButtonsBeforeSubmit() {
         document.getElementById("buttons-json-field").value = collectButtonsAsJson();
         return true;
-      }
+    }
 
-      function resetColor(button) {
+    function resetColor(button) {
         const colorInput = button.previousElementSibling;
         colorInput.value = colorInput.dataset.default;
-      }
+    }
 
-      function updateSummaryTitle(inputEl) {
+    function updateSummaryTitle(inputEl) {
         const block = inputEl.closest('.button-block');
         const titleSpan = block.querySelector('.block-title');
         titleSpan.textContent = inputEl.value.trim() || 'Untitled Button';
-      }
+    }
 
-      function sanitizeSlugJs(text) {
+    function sanitizeSlugJs(text) {
         return text.trim().toLowerCase().replace(/[^a-z0-9_\-]/g, '_') || 'contact';
-      }
+    }
 
-      function updateSlugPreview(inputEl) {
+    function updateSlugPreview(inputEl) {
         const block = inputEl.closest('.button-block');
         const previewCode = block.querySelector('.slug-preview code');
         const cleanSlug = sanitizeSlugJs(inputEl.value);
         previewCode.textContent = `./${cleanSlug}.vcf`;
-      }
+    }
 
-      function moveBlock(btn, direction) {
+    function moveBlock(btn, direction) {
         const block = btn.closest('.button-block');
         if (direction === -1 && block.previousElementSibling) {
-          block.parentNode.insertBefore(block, block.previousElementSibling);
+            block.parentNode.insertBefore(block, block.previousElementSibling);
         } else if (direction === 1 && block.nextElementSibling) {
-          block.parentNode.insertBefore(block.nextElementSibling, block);
+            block.parentNode.insertBefore(block.nextElementSibling, block);
         }
-      }
+    }
 
-      function deleteBlock(btn) {
+    function deleteBlock(btn) {
         if (confirm("Delete this button block?")) {
-          btn.closest('.button-block').remove();
+            btn.closest('.button-block').remove();
         }
-      }
+    }
 
-      function addLinkBlock() {
+    function addLinkBlock() {
         const container = document.getElementById("buttons-container");
         const block = document.createElement("details");
         block.className = "button-block";
         block.dataset.btnType = "link";
         block.open = true;
         block.innerHTML = `
-          <summary>
-            <div>
-              <span class="block-title">New External Link</span>
-              <span class="type-tag tag-link">link</span>
+            <summary>
+                <div>
+                    <span class="block-title">New External Link</span>
+                    <span class="type-tag tag-link">link</span>
+                </div>
+                <div class="control-btns" onclick="event.preventDefault();">
+                    <button type="button" onclick="moveBlock(this, -1)">▲ Up</button>
+                    <button type="button" onclick="moveBlock(this, 1)">▼ Down</button>
+                    <button type="button" class="btn-del" onclick="deleteBlock(this)">Delete</button>
+                </div>
+            </summary>
+            <div class="block-content">
+                <div class="color-picker-wrapper">
+                    <label style="margin:0;">Button Color:</label>
+                    <input type="color" data-field="color" value="#28a745" data-default="#28a745">
+                    <button type="button" class="color-reset-btn" onclick="resetColor(this)">Default</button>
+                    <label style="margin:0;">Button Text Color:</label>
+                    <input type="color" data-field="text_color" value="#ffffff" data-default="#ffffff">
+                    <button type="button" class="color-reset-btn" onclick="resetColor(this)">Default</button>
+                </div>
+                <div class="icon-picker-control">
+                    <label style="margin:0;">Button Icon:</label>
+                    <button type="button" class="icon-picker-button" onclick="openIconPicker(this)"><img alt="" style="display:none" /><span>No icon</span></button>
+                    <input type="hidden" data-field="icon" value="">
+                </div>
+                <label>Button Label</label>
+                <input type="text" data-field="label" placeholder="e.g. Official Website" oninput="updateSummaryTitle(this)" required>
+                <label>Target URL</label>
+                <input type="text" data-field="url" placeholder="e.g. https://example.com" required>
             </div>
-            <div class="control-btns" onclick="event.preventDefault();">
-              <button type="button" onclick="moveBlock(this, -1)">▲ Up</button>
-              <button type="button" onclick="moveBlock(this, 1)">▼ Down</button>
-              <button type="button" class="btn-del" onclick="deleteBlock(this)">Delete</button>
-            </div>
-          </summary>
-          <div class="block-content">
-            <div class="color-picker-wrapper">
-              <label style="margin:0;">Button Color:</label>
-              <input type="color" data-field="color" value="#28a745" data-default="#28a745">
-              <button type="button" class="color-reset-btn" onclick="resetColor(this)">Default</button>
-              <label style="margin:0;">Button Text Color:</label>
-              <input type="color" data-field="text_color" value="#ffffff" data-default="#ffffff">
-              <button type="button" class="color-reset-btn" onclick="resetColor(this)">Default</button>
-            </div>
-            <div class="icon-picker-control">
-              <label style="margin:0;">Button Icon:</label>
-              <button type="button" class="icon-picker-button" onclick="openIconPicker(this)"><img alt="" style="display:none" /><span>No icon</span></button>
-              <input type="hidden" data-field="icon" value="">
-            </div>
-            <label>Button Label</label>
-            <input type="text" data-field="label" placeholder="e.g. Official Website" oninput="updateSummaryTitle(this)" required>
-            <label>Target URL</label>
-            <input type="text" data-field="url" placeholder="e.g. https://example.com" required>
-          </div>
         `;
         container.appendChild(block);
-      }
+    }
 
-      function addVCardBlock() {
+    function addVCardBlock() {
         const container = document.getElementById("buttons-container");
         const block = document.createElement("details");
         block.className = "button-block";
         block.dataset.btnType = "vcard";
         block.open = true;
         block.innerHTML = `
-          <summary>
-            <div>
-              <span class="block-title">New Contact (vCard)</span>
-              <span class="type-tag tag-vcard">vcard</span>
+            <summary>
+                <div>
+                    <span class="block-title">New Contact (vCard)</span>
+                    <span class="type-tag tag-vcard">vcard</span>
+                </div>
+                <div class="control-btns" onclick="event.preventDefault();">
+                    <button type="button" onclick="moveBlock(this, -1)">▲ Up</button>
+                    <button type="button" onclick="moveBlock(this, 1)">▼ Down</button>
+                    <button type="button" class="btn-del" onclick="deleteBlock(this)">Delete</button>
+                </div>
+            </summary>
+            <div class="block-content">
+                <div class="color-picker-wrapper">
+                    <label style="margin:0;">Button Color:</label>
+                    <input type="color" data-field="color" value="#0284c7" data-default="#0284c7">
+                    <button type="button" class="color-reset-btn" onclick="resetColor(this)">Default</button>
+                    <label style="margin:0;">Button Text Color:</label>
+                    <input type="color" data-field="text_color" value="#ffffff" data-default="#ffffff">
+                    <button type="button" class="color-reset-btn" onclick="resetColor(this)">Default</button>
+                </div>
+                <div class="icon-picker-control">
+                    <label style="margin:0;">Button Icon:</label>
+                    <button type="button" class="icon-picker-button" onclick="openIconPicker(this)"><img alt="" style="display:none" /><span>No icon</span></button>
+                    <input type="hidden" data-field="icon" value="">
+                </div>
+                <label>Button Label on Public Page</label>
+                <input type="text" data-field="button_label" placeholder="e.g. Save Contact Info" oninput="updateSummaryTitle(this)" required>
+                <label>vCard Filename Slug</label>
+                <input type="text" data-field="slug" placeholder="e.g. john_doe" oninput="updateSlugPreview(this)" required>
+                <small class="slug-preview">Generates <code>./contact.vcf</code></small>
+                <details class="nested-vcard-details" open>
+                    <summary>Edit Contact Card Details (Name, Phone, Email)</summary>
+                    <div style="padding: 10px 12px;">
+                        <label>Full Name</label>
+                        <input type="text" data-field="fn" placeholder="e.g. John Doe">
+                        <label>Organization</label>
+                        <input type="text" data-field="org" placeholder="e.g. Example Inc.">
+                        <label>Job Title</label>
+                        <input type="text" data-field="title" placeholder="e.g. Principal Engineer">
+                        <label>Email</label>
+                        <input type="email" data-field="email" placeholder="e.g. john@example.com">
+                        <label>Phone Number</label>
+                        <input type="text" data-field="phone" placeholder="e.g. +1 555 019 2831">
+                        <label>Website URL</label>
+                        <input type="text" data-field="url" placeholder="e.g. https://example.com">
+                    </div>
+                </details>
             </div>
-            <div class="control-btns" onclick="event.preventDefault();">
-              <button type="button" onclick="moveBlock(this, -1)">▲ Up</button>
-              <button type="button" onclick="moveBlock(this, 1)">▼ Down</button>
-              <button type="button" class="btn-del" onclick="deleteBlock(this)">Delete</button>
-            </div>
-          </summary>
-          <div class="block-content">
-            <div class="color-picker-wrapper">
-              <label style="margin:0;">Button Color:</label>
-              <input type="color" data-field="color" value="#0284c7" data-default="#0284c7">
-              <button type="button" class="color-reset-btn" onclick="resetColor(this)">Default</button>
-              <label style="margin:0;">Button Text Color:</label>
-              <input type="color" data-field="text_color" value="#ffffff" data-default="#ffffff">
-              <button type="button" class="color-reset-btn" onclick="resetColor(this)">Default</button>
-            </div>
-            <div class="icon-picker-control">
-              <label style="margin:0;">Button Icon:</label>
-              <button type="button" class="icon-picker-button" onclick="openIconPicker(this)"><img alt="" style="display:none" /><span>No icon</span></button>
-              <input type="hidden" data-field="icon" value="">
-            </div>
-            <label>Button Label on Public Page</label>
-            <input type="text" data-field="button_label" placeholder="e.g. Save Contact Info" oninput="updateSummaryTitle(this)" required>
-            <label>vCard Filename Slug</label>
-            <input type="text" data-field="slug" placeholder="e.g. john_doe" oninput="updateSlugPreview(this)" required>
-            <small class="slug-preview">Generates <code>./contact.vcf</code></small>
-            <details class="nested-vcard-details" open>
-              <summary>Edit Contact Card Details (Name, Phone, Email)</summary>
-              <div style="padding: 10px 12px;">
-                <label>Full Name</label>
-                <input type="text" data-field="fn" placeholder="e.g. John Doe">
-                <label>Organization</label>
-                <input type="text" data-field="org" placeholder="e.g. Example Inc.">
-                <label>Job Title</label>
-                <input type="text" data-field="title" placeholder="e.g. Principal Engineer">
-                <label>Email</label>
-                <input type="email" data-field="email" placeholder="e.g. john@example.com">
-                <label>Phone Number</label>
-                <input type="text" data-field="phone" placeholder="e.g. +1 555 019 2831">
-                <label>Website URL</label>
-                <input type="text" data-field="url" placeholder="e.g. https://example.com">
-              </div>
-            </details>
-          </div>
         `;
         container.appendChild(block);
-      }
-    </script>
-  </body>
-</html>
+    }
+  </script>
+{% endblock %}
