@@ -32,5 +32,8 @@ RUN useradd -m appuser \
 # Switch to non-root user for security
 USER appuser
 
+# Prepare button icons
+RUN flask sync-icons
+
 # Run Gunicorn binding to all interfaces on port 8000
 CMD ["/entrypoint.sh"]

@@ -3,6 +3,12 @@ venv
 pub
 **/*.orig
 **/*.rej
+static
+*.svg
+__pycache__
+app.db
+logos.json
+secret_key
 
 # docker-specific
 __pycache__

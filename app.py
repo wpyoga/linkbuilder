@@ -3,6 +3,7 @@ import os
 import re
 import io
 import json
+import math
 import shutil
 import secrets
 import sqlite3
@@ -35,6 +36,9 @@ from phonenumbers.phonenumberutil import NumberParseException
 # defusedxml protects against XML attacks (XXE, billion-laughs, external entity expansion)
 # while we parse uploaded SVGs in order to sanitize them.
 import defusedxml.ElementTree as DefusedET
+import xml.etree.ElementTree as ET
+
+from svgelements import SVG
 
 # Initialize the main Flask application instance
 app = Flask(__name__)
@@ -162,13 +166,9 @@ DB_PATH = os.path.abspath(
 OUTPUT_DIR = os.path.abspath(os.environ.get("OUTPUT_DIR", "/srv/www/example.com/@info"))
 
 ICON_CATALOG_PATH = os.path.abspath(
-    os.environ.get(
-        "ICON_CATALOG_PATH",
-        os.path.join(
-            os.path.dirname(os.path.abspath(__file__)), "static", "icons", "logos.json"
-        ),
-    )
+    os.environ.get("ICON_CATALOG_PATH", "static/icons/logos.json")
 )
+ICON_SVG_DIR = os.path.join(os.path.dirname(ICON_CATALOG_PATH), "svg")
 ICON_CATALOG_URL = os.environ.get(
     "ICON_CATALOG_URL",
     "https://raw.githubusercontent.com/iconify/icon-sets/master/json/logos.json",
@@ -346,13 +346,6 @@ def init_db_command():
         app.logger.warning(f"Initial bake failed: {e}")
 
 
-@app.cli.command("sync-icons")
-def sync_icons_command():
-    """Download/cache the SVG Logos catalog used by the admin icon picker."""
-    catalog = sync_icon_catalog()
-    print(f"SVG Logos catalog synchronized: {len(catalog['icons'])} icons.")
-
-
 # Helper function to query complete site state from SQLite storage.
 DEFAULT_LIGHT_BACKGROUND = "#f8fafc"
 DEFAULT_DARK_BACKGROUND = "#0f172a"
@@ -363,9 +356,133 @@ def validate_hex_color(value: str) -> bool:
     return bool(re.fullmatch(r"#[0-9a-fA-F]{6}", (value or "").strip()))
 
 
+def calculate_svg_bbox(svg):
+    """
+    Calculate the bounding box of drawable SVG content.
+
+    Returns:
+        (xmin, ymin, xmax, ymax)
+    """
+    bbox = None
+
+    for element in svg.elements():
+        try:
+            if (
+                element.values.get("visibility") == "hidden"
+                or element.values.get("display") == "none"
+            ):
+                continue
+        except AttributeError:
+            pass
+
+        try:
+            element_bbox = element.bbox()
+        except Exception as e:
+            print(f"Warning: {e}")
+
+        if element_bbox is None:
+            continue
+
+        if not all(math.isfinite(value) for value in element_bbox):
+            raise ValueError(f"Element has non-finite bounds: {element_bbox}")
+
+        xmin, ymin, xmax, ymax = element_bbox
+
+        if bbox is None:
+            bbox = [xmin, ymin, xmax, ymax]
+        else:
+            bbox[0] = min(bbox[0], xmin)
+            bbox[1] = min(bbox[1], ymin)
+            bbox[2] = max(bbox[2], xmax)
+            bbox[3] = max(bbox[3], ymax)
+
+    if bbox is None:
+        raise ValueError("SVG contains no drawable geometry")
+
+    return tuple(bbox)
+
+
+def normalize_icon_to_file(icon_name, icon, catalog, output_dir):
+    """Normalize one catalog icon and write its SVG to output_dir."""
+    source_width = icon.get("width", catalog.get("width", 24))
+    source_height = icon.get("height", catalog.get("height", 24))
+
+    # Get the catalog body
+    body = icon.get("body", "")
+
+    # Default XML NS
+    xmlns = 'xmlns="http://www.w3.org/2000/svg"'
+
+    # Add xlink NS if used in the body
+    # This operation is a bit slow (string search) but it's not an everyday operation
+    # And it communicates the intent well, so keep it instead of indiscriminately adding the NS
+    if "xlink:href=" in body:
+        xmlns += ' xmlns:xlink="http://w3.org"'
+
+    # Parse the catalog body as XML and use it to populate an SVG document.
+    body_root = DefusedET.fromstring(f"<svg {xmlns}>{body}</svg>")
+
+    root = ET.Element(
+        "{http://www.w3.org/2000/svg}svg",
+        {
+            "width": str(source_width),
+            "height": str(source_height),
+            "viewBox": f"0 0 {source_width} {source_height}",
+        },
+    )
+    root.extend(body_root)
+
+    # svgelements is used only for geometry calculation.
+    svg_bytes = ET.tostring(root, encoding="utf-8")
+    svg = SVG.parse(io.BytesIO(svg_bytes))
+
+    xmin, ymin, xmax, ymax = calculate_svg_bbox(svg)
+
+    width = xmax - xmin
+    height = ymax - ymin
+
+    if width <= 0 or height <= 0:
+        raise ValueError(
+            f"Icon {icon_name!r} has invalid bounding box: "
+            f"{xmin}, {ymin}, {xmax}, {ymax}"
+        )
+
+    if width == 0 or not 0.75 <= height / width <= 1.33:
+        return
+
+    # Modify only the root SVG attributes.
+    root.set(
+        "viewBox",
+        f"{xmin:g} {ymin:g} {width:g} {height:g}",
+    )
+    root.set("width", f"{width:g}")
+    root.set("height", f"{height:g}")
+
+    ET.register_namespace("", "http://www.w3.org/2000/svg")
+
+    output_path = os.path.join(output_dir, f"{icon_name}.svg")
+    temporary_path = f"{output_path}.tmp"
+
+    ET.ElementTree(root).write(
+        temporary_path,
+        encoding="utf-8",
+        xml_declaration=True,
+    )
+    os.replace(temporary_path, output_path)
+
+
+@app.cli.command("sync-icons")
+def sync_icons_command():
+    """Download/cache the SVG Logos catalog used by the admin icon picker."""
+    catalog = sync_icon_catalog()
+    print(f"SVG Logos catalog synchronized: {len(catalog['icons'])} icons.")
+
+
 def sync_icon_catalog():
-    """Download and atomically cache the CC0 SVG Logos IconifyJSON catalog."""
+    """Download/cache the SVG Logos catalog and normalized SVG files."""
     os.makedirs(os.path.dirname(ICON_CATALOG_PATH), exist_ok=True)
+    os.makedirs(ICON_SVG_DIR, exist_ok=True)
+
     request = urllib.request.Request(
         ICON_CATALOG_URL,
         headers={"User-Agent": "Linkbuilder/1.0"},
@@ -376,6 +493,15 @@ def sync_icon_catalog():
     catalog = json.loads(payload)
     if catalog.get("prefix") != "logos" or not isinstance(catalog.get("icons"), dict):
         raise ValueError("Downloaded SVG Logos catalog has an unexpected format.")
+
+    for icon_name, icon in catalog["icons"].items():
+        print(icon_name)
+        normalize_icon_to_file(
+            icon_name,
+            icon,
+            catalog,
+            ICON_SVG_DIR,
+        )
 
     temporary_path = f"{ICON_CATALOG_PATH}.tmp"
     with open(temporary_path, "wb") as f_out:
@@ -429,15 +555,13 @@ def get_icon_svg(icon_name: str) -> bytes:
     if not icon:
         raise KeyError(icon_name)
 
-    width = icon.get("width", 24)
-    height = icon.get("height", 24)
-    raw_svg = (
-        f'<svg xmlns="http://www.w3.org/2000/svg" width="{width}" '
-        f'height="{height}" viewBox="0 0 {width} {height}">'
-        f'{icon.get("body", "")}</svg>'
-    ).encode("utf-8")
+    path = os.path.join(ICON_SVG_DIR, f"{icon_name}.svg")
 
-    return sanitize_svg(raw_svg)
+    try:
+        with open(path, "rb") as f_in:
+            return sanitize_svg(f_in.read())
+    except FileNotFoundError:
+        raise KeyError(icon_name)
 
 
 def export_selected_icons(buttons, output_dir):
@@ -745,8 +869,6 @@ def sanitize_svg(raw_bytes):
     # auto-generated ns0: prefixes on every tag (<ns0:svg>, <ns0:circle>, ...) -- purely
     # cosmetic/compatibility, not a security concern, but it keeps the sanitized output
     # closer to ordinary unprefixed SVG that every renderer expects.
-    import xml.etree.ElementTree as ET
-
     ET.register_namespace("", "http://www.w3.org/2000/svg")
     return ET.tostring(root, encoding="utf-8")
 

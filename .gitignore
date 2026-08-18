@@ -1,4 +1,10 @@
 venv
 pub
+static
+*.svg
+__pycache__
 **/*.orig
 **/*.rej
+app.db
+logos.json
+secret_key
