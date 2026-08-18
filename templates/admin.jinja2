@@ -1,8 +1,9 @@
 {% extends "base.jinja2" %}
+{% from "base.jinja2" import password_field, render_flashes %}
 {% block title %}Linkbuilder Admin{% endblock %}
 {% block extra_head %}
-  <style>
-    /* Admin-specific styles that don't belong in base */
+    <style>
+    /* Admin-specific styles */
     .admin-header {
         display: flex;
         justify-content: space-between;
@@ -187,232 +188,233 @@
     .icon-result:hover { background: #f8fafc; }
     .icon-result img { width: 24px; height: 24px; object-fit: contain; }
     .icon-result span { font-size: 0.8rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
-  </style>
+    </style>
 {% endblock %}
 {% block content %}
-  <div class="admin-header">
-    <h2>Linkbuilder Admin</h2>
-    <span style="font-size: 0.9rem">
-      Logged in as <strong>{{ user.username }}</strong> |
-      <a href="/change-password" style="color: #475569; text-decoration: none">Change Password</a> |
-      <a href="/logout" style="color: #d9534f; text-decoration: none">Logout</a>
-    </span>
-  </div>
-  <div class="admin-container">
-    {% if validation_errors %}
-      <div class="validation-summary">Please correct the highlighted fields below.</div>
-    {% endif %}
-    <form action="/save"
-          method="POST"
-          enctype="multipart/form-data"
-          id="admin-form"
-          onsubmit="return serializeButtonsBeforeSubmit();">
-      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
-      <input type="hidden" name="buttons_json" id="buttons-json-field" value="" />
-      <div class="card">
-        <h3>General Info & Media</h3>
-        <label for="page-title">Page Title / Name</label>
-        <input id="page-title"
-               type="text"
-               name="site_title"
-               value="{{ data.title }}"
-               autocomplete="off"
-               placeholder="e.g. Acme Corporation"
-               required />
-        <label>Bio / Description</label>
-        <textarea name="bio"
-                  rows="3"
-                  placeholder="e.g. Software engineering and consulting services.">{{ data.bio }}</textarea>
-        <label>Page Theme</label>
-        <select name="theme">
-          <option value="auto" {% if data.theme=='auto' %}selected{% endif %}>Auto (Match Visitor OS/Browser Dark Mode)</option>
-          <option value="light" {% if data.theme=='light' %}selected{% endif %}>Light</option>
-          <option value="dark" {% if data.theme=='dark' %}selected{% endif %}>Dark</option>
-        </select>
-        <div class="color-picker-wrapper">
-          <label style="margin:0;">Light Background:</label>
-          <input type="color"
-                 name="background_light"
-                 value="{{ data.background_light or '#f8fafc' }}"
-                 data-default="#f8fafc" />
-          <button type="button" class="color-reset-btn" onclick="resetColor(this)">Default</button>
-          <label style="margin:0;">Dark Background:</label>
-          <input type="color"
-                 name="background_dark"
-                 value="{{ data.background_dark or '#0f172a' }}"
-                 data-default="#0f172a" />
-          <button type="button" class="color-reset-btn" onclick="resetColor(this)">Default</button>
-        </div>
-        <label>Favicon Image (.ico, .png, .svg)</label>
-        <input type="file" name="favicon" accept="image/*,.ico" />
-        {% if data.has_favicon %}<small style="color: #16a34a;">Custom favicon currently stored in database</small>{% endif %}
-        <label>Organization Logo Header (.png, .jpg, .svg)</label>
-        <input type="file" name="org_logo" accept="image/*" />
-        {% if data.has_org_logo %}<small style="color: #16a34a;">Custom logo currently stored in database</small>{% endif %}
-      </div>
-      <div class="card">
-        <h3>Page Buttons (Arrange & Order)</h3>
-        <div id="buttons-container">
-          {% for btn in data.buttons %}
-            {% set btn_errors = validation_errors.get(loop.index0, {}) if validation_errors else {} %}
-            <details class="button-block" data-btn-type="{{ btn.type }}" open>
-              <summary>
-                <div>
-                  <span class="block-title">
-                    {% if btn.type == 'link' %}
-                      {{ btn.label or 'New Link' }}
-                    {% else %}
-                      {{ btn.button_label or 'New vCard' }}
-                    {% endif %}
-                  </span>
-                  <span class="type-tag {% if btn.type == 'link' %}tag-link{% else %}tag-vcard{% endif %}">{{ btn.type }}</span>
-                </div>
-                <div class="control-btns" onclick="event.preventDefault();">
-                  <button type="button" onclick="moveBlock(this, -1)">▲ Up</button>
-                  <button type="button" onclick="moveBlock(this, 1)">▼ Down</button>
-                  <button type="button" class="btn-del" onclick="deleteBlock(this)">Delete</button>
-                </div>
-              </summary>
-              <div class="block-content">
-                <div class="color-picker-wrapper">
-                  <label style="margin:0;">Button Color:</label>
-                  <input type="color"
-                         data-field="color"
-                         value="{{ btn.color or ('#28a745' if btn.type == 'link' else '#0284c7') }}" />
-                  <button type="button" class="color-reset-btn" onclick="resetColor(this)">Default</button>
-                  <label style="margin:0;">Button Text Color:</label>
-                  <input type="color"
-                         data-field="text_color"
-                         value="{{ btn.text_color or '#ffffff' }}"
-                         data-default="#ffffff" />
-                  <button type="button" class="color-reset-btn" onclick="resetColor(this)">Default</button>
-                </div>
-                <div class="icon-picker-control">
-                  <label style="margin:0;">Button Icon:</label>
-                  <button type="button"
-                          class="icon-picker-button"
-                          onclick="openIconPicker(this)">
-                    {% if btn.icon %}
-                      <img src="{{ url_for('static', filename='icons/' + btn.icon + '.svg') }}"
-                           alt="" />
-                    {% else %}
-                      <img src="" alt="" style="display:none" />
-                    {% endif %}
-                    <span>{{ btn.icon|replace('-', ' ') |title if btn.icon else 'No icon' }}</span>
-                  </button>
-                  <input type="hidden" data-field="icon" value="{{ btn.icon or '' }}" />
-                </div>
-                {% if btn.type == 'link' %}
-                  <label>Button Label</label>
-                  <input type="text"
-                         data-field="label"
-                         value="{{ btn.label }}"
-                         placeholder="e.g. Official Website"
-                         oninput="updateSummaryTitle(this)"
-                         required />
-                  <label>Target URL</label>
-                  <input type="text"
-                         data-field="url"
-                         value="{{ btn.url }}"
-                         placeholder="e.g. https://example.com"
-                         required />
-                {% else %}
-                  <label>Button Label on Public Page</label>
-                  <input type="text"
-                         data-field="button_label"
-                         value="{{ btn.button_label }}"
-                         placeholder="e.g. Save Contact Info"
-                         oninput="updateSummaryTitle(this)"
-                         required />
-                  <label>vCard Filename Slug</label>
-                  <input type="text"
-                         data-field="slug"
-                         value="{{ btn.slug }}"
-                         placeholder="e.g. john_doe"
-                         oninput="updateSlugPreview(this)"
-                         required />
-                  <small class="slug-preview">Generates <code>./{{ btn.slug or 'contact' }}.vcf</code></small>
-                  <details class="nested-vcard-details" {% if btn_errors %}open{% endif %}>
-                    <summary>Edit Contact Card Details (Name, Phone, Email)</summary>
-                    <div style="padding: 10px 12px;">
-                      <label>Full Name</label>
-                      <input type="text"
-                             data-field="fn"
-                             value="{{ btn.fn }}"
-                             placeholder="e.g. John Doe" />
-                      <label>Organization</label>
-                      <input type="text"
-                             data-field="org"
-                             value="{{ btn.org }}"
-                             placeholder="e.g. Example Inc." />
-                      <label>Job Title</label>
-                      <input type="text"
-                             data-field="title"
-                             value="{{ btn.title }}"
-                             placeholder="e.g. Principal Engineer" />
-                      <label>Email</label>
-                      <input type="email"
-                             data-field="email"
-                             value="{{ btn.email }}"
-                             placeholder="e.g. john@example.com"
-                             class="{{ 'field-error' if btn_errors.get('email') }}"
-                             {% if btn_errors.get('email') %}aria-invalid="true"{% endif %} />
-                      {% if btn_errors.get('email') %}<div class="field-error-message">{{ btn_errors.email }}</div>{% endif %}
-                      <label>Phone Number</label>
-                      <input type="text"
-                             data-field="phone"
-                             value="{{ btn.phone }}"
-                             placeholder="e.g. +1 555 019 2831"
-                             pattern="\+[0-9][0-9 -]*"
-                             title="Enter a phone number starting with + and containing only numbers, spaces, or hyphens."
-                             class="{{ 'field-error' if btn_errors.get('phone') }}"
-                             {% if btn_errors.get('phone') %}aria-invalid="true"{% endif %} />
-                      {% if btn_errors.get('phone') %}<div class="field-error-message">{{ btn_errors.phone }}</div>{% endif %}
-                      <label>Website URL</label>
-                      <input type="text"
-                             data-field="url"
-                             value="{{ btn.url }}"
-                             placeholder="e.g. https://example.com"
-                             class="{{ 'field-error' if btn_errors.get('url') }}"
-                             {% if btn_errors.get('url') %}aria-invalid="true"{% endif %} />
-                      {% if btn_errors.get('url') %}<div class="field-error-message">{{ btn_errors.url }}</div>{% endif %}
-                    </div>
-                  </details>
-                {% endif %}
-              </div>
-            </details>
-          {% endfor %}
-        </div>
-        <div class="add-actions">
-          <button type="button" class="btn-add" onclick="addLinkBlock()">+ Add External Link</button>
-          <button type="button" class="btn-add btn-add-vcard" onclick="addVCardBlock()">+ Add Contact (vCard)</button>
-        </div>
-      </div>
-      <button type="submit" class="submit-btn">Save & Bake Static Site</button>
-    </form>
-  </div>
-  <!-- Icon Picker Modal -->
-  <div id="icon-picker-modal"
-       class="icon-picker-modal"
-       onclick="handleIconPickerBackdrop(event)">
-    <div class="icon-picker-dialog"
-         role="dialog"
-         aria-modal="true"
-         aria-labelledby="icon-picker-title">
-      <div class="icon-picker-header">
-        <h3 id="icon-picker-title">Choose a brand icon</h3>
-        <input id="icon-picker-search"
-               type="search"
-               placeholder="Search brand icons..."
-               autocomplete="off" />
-        <button type="button" class="color-reset-btn" onclick="closeIconPicker()">Close</button>
-      </div>
-      <div id="icon-picker-results" class="icon-picker-results"></div>
+    <div class="admin-header">
+        <h2>Linkbuilder Admin</h2>
+        <span style="font-size: 0.9rem">
+            Logged in as <strong>{{ user.username }}</strong> |
+            <a href="/change-password" style="color: #475569; text-decoration: none">Change Password</a> |
+            <a href="/logout" style="color: #d9534f; text-decoration: none">Logout</a>
+        </span>
     </div>
-  </div>
+    <div class="admin-container">
+        {{ render_flashes() }}
+        {% if validation_errors %}
+            <div class="validation-summary">Please correct the highlighted fields below.</div>
+        {% endif %}
+        <form action="/save"
+              method="POST"
+              enctype="multipart/form-data"
+              id="admin-form"
+              onsubmit="return serializeButtonsBeforeSubmit();">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
+            <input type="hidden" name="buttons_json" id="buttons-json-field" value="" />
+            <div class="card">
+                <h3>General Info & Media</h3>
+                <label for="page-title">Page Title / Name</label>
+                <input id="page-title"
+                       type="text"
+                       name="site_title"
+                       value="{{ data.title }}"
+                       autocomplete="off"
+                       placeholder="e.g. Acme Corporation"
+                       required />
+                <label>Bio / Description</label>
+                <textarea name="bio"
+                          rows="3"
+                          placeholder="e.g. Software engineering and consulting services.">{{ data.bio }}</textarea>
+                <label>Page Theme</label>
+                <select name="theme">
+                    <option value="auto" {% if data.theme=='auto' %}selected{% endif %}>Auto (Match Visitor OS/Browser Dark Mode)</option>
+                    <option value="light" {% if data.theme=='light' %}selected{% endif %}>Light</option>
+                    <option value="dark" {% if data.theme=='dark' %}selected{% endif %}>Dark</option>
+                </select>
+                <div class="color-picker-wrapper">
+                    <label style="margin:0;">Light Background:</label>
+                    <input type="color"
+                           name="background_light"
+                           value="{{ data.background_light or '#f8fafc' }}"
+                           data-default="#f8fafc" />
+                    <button type="button" class="color-reset-btn" onclick="resetColor(this)">Default</button>
+                    <label style="margin:0;">Dark Background:</label>
+                    <input type="color"
+                           name="background_dark"
+                           value="{{ data.background_dark or '#0f172a' }}"
+                           data-default="#0f172a" />
+                    <button type="button" class="color-reset-btn" onclick="resetColor(this)">Default</button>
+                </div>
+                <label>Favicon Image (.ico, .png, .svg)</label>
+                <input type="file" name="favicon" accept="image/*,.ico" />
+                {% if data.has_favicon %}<small style="color: #16a34a;">Custom favicon currently stored in database</small>{% endif %}
+                <label>Organization Logo Header (.png, .jpg, .svg)</label>
+                <input type="file" name="org_logo" accept="image/*" />
+                {% if data.has_org_logo %}<small style="color: #16a34a;">Custom logo currently stored in database</small>{% endif %}
+            </div>
+            <div class="card">
+                <h3>Page Buttons (Arrange & Order)</h3>
+                <div id="buttons-container">
+                    {% for btn in data.buttons %}
+                        {% set btn_errors = validation_errors.get(loop.index0, {}) if validation_errors else {} %}
+                        <details class="button-block" data-btn-type="{{ btn.type }}" open>
+                            <summary>
+                                <div>
+                                    <span class="block-title">
+                                        {% if btn.type == 'link' %}
+                                            {{ btn.label or 'New Link' }}
+                                        {% else %}
+                                            {{ btn.button_label or 'New vCard' }}
+                                        {% endif %}
+                                    </span>
+                                    <span class="type-tag {% if btn.type == 'link' %}tag-link{% else %}tag-vcard{% endif %}">{{ btn.type }}</span>
+                                </div>
+                                <div class="control-btns" onclick="event.preventDefault();">
+                                    <button type="button" onclick="moveBlock(this, -1)">▲ Up</button>
+                                    <button type="button" onclick="moveBlock(this, 1)">▼ Down</button>
+                                    <button type="button" class="btn-del" onclick="deleteBlock(this)">Delete</button>
+                                </div>
+                            </summary>
+                            <div class="block-content">
+                                <div class="color-picker-wrapper">
+                                    <label style="margin:0;">Button Color:</label>
+                                    <input type="color"
+                                           data-field="color"
+                                           value="{{ btn.color or ('#28a745' if btn.type == 'link' else '#0284c7') }}" />
+                                    <button type="button" class="color-reset-btn" onclick="resetColor(this)">Default</button>
+                                    <label style="margin:0;">Button Text Color:</label>
+                                    <input type="color"
+                                           data-field="text_color"
+                                           value="{{ btn.text_color or '#ffffff' }}"
+                                           data-default="#ffffff" />
+                                    <button type="button" class="color-reset-btn" onclick="resetColor(this)">Default</button>
+                                </div>
+                                <div class="icon-picker-control">
+                                    <label style="margin:0;">Button Icon:</label>
+                                    <button type="button"
+                                            class="icon-picker-button"
+                                            onclick="openIconPicker(this)">
+                                        {% if btn.icon %}
+                                            <img src="{{ url_for('static', filename='icons/' + btn.icon + '.svg') }}"
+                                                 alt="" />
+                                        {% else %}
+                                            <img src="" alt="" style="display:none" />
+                                        {% endif %}
+                                        <span>{{ btn.icon|replace('-', ' ') |title if btn.icon else 'No icon' }}</span>
+                                    </button>
+                                    <input type="hidden" data-field="icon" value="{{ btn.icon or '' }}" />
+                                </div>
+                                {% if btn.type == 'link' %}
+                                    <label>Button Label</label>
+                                    <input type="text"
+                                           data-field="label"
+                                           value="{{ btn.label }}"
+                                           placeholder="e.g. Official Website"
+                                           oninput="updateSummaryTitle(this)"
+                                           required />
+                                    <label>Target URL</label>
+                                    <input type="text"
+                                           data-field="url"
+                                           value="{{ btn.url }}"
+                                           placeholder="e.g. https://example.com"
+                                           required />
+                                {% else %}
+                                    <label>Button Label on Public Page</label>
+                                    <input type="text"
+                                           data-field="button_label"
+                                           value="{{ btn.button_label }}"
+                                           placeholder="e.g. Save Contact Info"
+                                           oninput="updateSummaryTitle(this)"
+                                           required />
+                                    <label>vCard Filename Slug</label>
+                                    <input type="text"
+                                           data-field="slug"
+                                           value="{{ btn.slug }}"
+                                           placeholder="e.g. john_doe"
+                                           oninput="updateSlugPreview(this)"
+                                           required />
+                                    <small class="slug-preview">Generates <code>./{{ btn.slug or 'contact' }}.vcf</code></small>
+                                    <details class="nested-vcard-details" {% if btn_errors %}open{% endif %}>
+                                        <summary>Edit Contact Card Details (Name, Phone, Email)</summary>
+                                        <div style="padding: 10px 12px;">
+                                            <label>Full Name</label>
+                                            <input type="text"
+                                                   data-field="fn"
+                                                   value="{{ btn.fn }}"
+                                                   placeholder="e.g. John Doe" />
+                                            <label>Organization</label>
+                                            <input type="text"
+                                                   data-field="org"
+                                                   value="{{ btn.org }}"
+                                                   placeholder="e.g. Example Inc." />
+                                            <label>Job Title</label>
+                                            <input type="text"
+                                                   data-field="title"
+                                                   value="{{ btn.title }}"
+                                                   placeholder="e.g. Principal Engineer" />
+                                            <label>Email</label>
+                                            <input type="email"
+                                                   data-field="email"
+                                                   value="{{ btn.email }}"
+                                                   placeholder="e.g. john@example.com"
+                                                   class="{{ 'field-error' if btn_errors.get('email') }}"
+                                                   {% if btn_errors.get('email') %}aria-invalid="true"{% endif %} />
+                                            {% if btn_errors.get('email') %}<div class="field-error-message">{{ btn_errors.email }}</div>{% endif %}
+                                            <label>Phone Number</label>
+                                            <input type="text"
+                                                   data-field="phone"
+                                                   value="{{ btn.phone }}"
+                                                   placeholder="e.g. +1 555 019 2831"
+                                                   pattern="\+[0-9][0-9 -]*"
+                                                   title="Enter a phone number starting with + and containing only numbers, spaces, or hyphens."
+                                                   class="{{ 'field-error' if btn_errors.get('phone') }}"
+                                                   {% if btn_errors.get('phone') %}aria-invalid="true"{% endif %} />
+                                            {% if btn_errors.get('phone') %}<div class="field-error-message">{{ btn_errors.phone }}</div>{% endif %}
+                                            <label>Website URL</label>
+                                            <input type="text"
+                                                   data-field="url"
+                                                   value="{{ btn.url }}"
+                                                   placeholder="e.g. https://example.com"
+                                                   class="{{ 'field-error' if btn_errors.get('url') }}"
+                                                   {% if btn_errors.get('url') %}aria-invalid="true"{% endif %} />
+                                            {% if btn_errors.get('url') %}<div class="field-error-message">{{ btn_errors.url }}</div>{% endif %}
+                                        </div>
+                                    </details>
+                                {% endif %}
+                            </div>
+                        </details>
+                    {% endfor %}
+                </div>
+                <div class="add-actions">
+                    <button type="button" class="btn-add" onclick="addLinkBlock()">+ Add External Link</button>
+                    <button type="button" class="btn-add btn-add-vcard" onclick="addVCardBlock()">+ Add Contact (vCard)</button>
+                </div>
+            </div>
+            <button type="submit" class="submit-btn">Save & Bake Static Site</button>
+        </form>
+    </div>
+    <!-- Icon Picker Modal -->
+    <div id="icon-picker-modal"
+         class="icon-picker-modal"
+         onclick="handleIconPickerBackdrop(event)">
+        <div class="icon-picker-dialog"
+             role="dialog"
+             aria-modal="true"
+             aria-labelledby="icon-picker-title">
+            <div class="icon-picker-header">
+                <h3 id="icon-picker-title">Choose a brand icon</h3>
+                <input id="icon-picker-search"
+                       type="search"
+                       placeholder="Search brand icons..."
+                       autocomplete="off" />
+                <button type="button" class="color-reset-btn" onclick="closeIconPicker()">Close</button>
+            </div>
+            <div id="icon-picker-results" class="icon-picker-results"></div>
+        </div>
+    </div>
 {% endblock %}
 {% block scripts %}
-  <script>
+    <script>
     const iconCatalog = {{ icon_catalog|default([])|tojson }};
     let activeIconPickerButton = null;
 
@@ -665,5 +667,5 @@
         `;
         container.appendChild(block);
     }
-  </script>
+    </script>
 {% endblock %}

@@ -1,5 +1,5 @@
 {% extends "base.jinja2" %}
-{% from "base.jinja2" import password_field %}
+{% from "base.jinja2" import password_field, render_flashes %}
 {% block title %}Admin Login{% endblock %}
 {% block content %}
   <div style="display: flex;
@@ -8,6 +8,7 @@
               min-height: 80vh">
     <div class="card" style="width: 100%; max-width: 360px;">
       <h2 style="margin-top: 0; text-align: center;">Admin Login</h2>
+      {{ render_flashes() }}
       <form method="POST" action="/login">
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
         <label>Username</label>
