@@ -10,7 +10,7 @@ from svgelements import SVG
 import sqlite3
 from contextlib import contextmanager
 
-from config import ICON_SRC_URL, ICON_SVG_DIR, DB_PATH, ICON_NAME_RE
+from config import ICON_SRC_URL, ICON_DIR, DB_PATH
 
 # SVG elements that are never allowed to survive sanitization, regardless of namespace.
 # <script> is the direct code-execution vector; <foreignObject> can embed arbitrary
@@ -41,83 +41,15 @@ def get_db():
         conn.close()
 
 
-def calculate_svg_bbox(svg):
-    """
-    Calculate the bounding box of drawable SVG content.
-    Returns (xmin, ymin, xmax, ymax) or None if empty.
-    """
-    bbox = None
-    for element in svg.elements():
-        try:
-            if (
-                element.values.get("visibility") == "hidden"
-                or element.values.get("display") == "none"
-            ):
-                continue
-        except AttributeError:
-            pass
-        try:
-            element_bbox = element.bbox()
-        except Exception:
-            continue
-        if element_bbox is None:
-            continue
-        if not all(math.isfinite(v) for v in element_bbox):
-            continue
-
-        xmin, ymin, xmax, ymax = element_bbox
-        if bbox is None:
-            bbox = [xmin, ymin, xmax, ymax]
-        else:
-            bbox[0] = min(bbox[0], xmin)
-            bbox[1] = min(bbox[1], ymin)
-            bbox[2] = max(bbox[2], xmax)
-            bbox[3] = max(bbox[3], ymax)
-
-    if bbox is None:
-        return None
-    return tuple(bbox)
-
-
-def sanitize_svg_root(root):
-    """
-    Strip disallowed elements and attributes from an XML Element tree.
-    This is an allowlist-by-removal approach: we remove the small set of constructs
-    that are unambiguously script-or-external-load vectors.
-    """
-
-    def strip_attrs(el):
-        for attr_name in list(el.attrib.keys()):
-            local_attr = attr_name.split("}")[-1]
-            if (
-                local_attr.lower().startswith(SVG_DISALLOWED_ATTR_PREFIXES)
-                or local_attr.lower() in SVG_DISALLOWED_ATTRS
-            ):
-                del el.attrib[attr_name]
-
-    def strip_recursive(el):
-        strip_attrs(el)
-        for child in list(el):
-            local_tag = child.tag.split("}")[-1] if isinstance(child.tag, str) else ""
-            if local_tag in SVG_DISALLOWED_TAGS:
-                el.remove(child)
-                continue
-            strip_recursive(child)
-
-    strip_recursive(root)
-    ET.register_namespace("", "http://www.w3.org/2000/svg")
-    return root
-
-
 def process_icon(icon_name, icon_data, source_catalog):
     """
     Process a single icon:
     1. Check aspect ratio filter (0.75 - 1.33).
     2. Sanitize SVG (remove scripts/event handlers).
-    3. Calculate precise viewBox based on geometry.
+    3. Calculate precise viewBox based on geometry using svgelements.
     4. Write to disk.
 
-    Returns metadata dict if successful, None if filtered out.
+    Returns the icon_name if successful, None if filtered out.
     """
     source_width = icon_data.get("width", source_catalog.get("width", 24))
     source_height = icon_data.get("height", source_catalog.get("height", 24))
@@ -146,18 +78,63 @@ def process_icon(icon_name, icon_data, source_catalog):
     )
     root.extend(body_root)
 
-    # Sanitize immediately before any further processing
-    root = sanitize_svg_root(root)
+    # Inline SVG Sanitization
+    # This is an allowlist-by-removal approach: we remove the small set of constructs
+    # that are unambiguously script-or-external-load vectors.
+    def sanitize(el):
+        for attr_name in list(el.attrib.keys()):
+            local_attr = attr_name.split("}")[-1]
+            if (
+                local_attr.lower().startswith(SVG_DISALLOWED_ATTR_PREFIXES)
+                or local_attr.lower() in SVG_DISALLOWED_ATTRS
+            ):
+                del el.attrib[attr_name]
+        for child in list(el):
+            local_tag = child.tag.split("}")[-1] if isinstance(child.tag, str) else ""
+            if local_tag in SVG_DISALLOWED_TAGS:
+                el.remove(child)
+            else:
+                sanitize(child)
+
+    sanitize(root)
+    ET.register_namespace("", "http://www.w3.org/2000/svg")
 
     # Parse for geometry calculation using svgelements
     svg_bytes = ET.tostring(root, encoding="utf-8")
     try:
         svg_obj = SVG.parse(io.BytesIO(svg_bytes))
-        bbox = calculate_svg_bbox(svg_obj)
-    except Exception:
-        return None
 
-    if bbox is None:
+        # Calculate bounding box inline
+        bbox = None
+        for element in svg_obj.elements():
+            try:
+                if (
+                    element.values.get("visibility") == "hidden"
+                    or element.values.get("display") == "none"
+                ):
+                    continue
+            except AttributeError:
+                pass
+            try:
+                element_bbox = element.bbox()
+            except Exception:
+                continue
+            if element_bbox is None or not all(math.isfinite(v) for v in element_bbox):
+                continue
+
+            xmin, ymin, xmax, ymax = element_bbox
+            if bbox is None:
+                bbox = [xmin, ymin, xmax, ymax]
+            else:
+                bbox[0] = min(bbox[0], xmin)
+                bbox[1] = min(bbox[1], ymin)
+                bbox[2] = max(bbox[2], xmax)
+                bbox[3] = max(bbox[3], ymax)
+
+        if bbox is None:
+            return None
+
+    except Exception:
         return None
 
     xmin, ymin, xmax, ymax = bbox
@@ -179,18 +156,13 @@ def process_icon(icon_name, icon_data, source_catalog):
     root.set("height", f"{height:g}")
 
     # Write to disk
-    os.makedirs(ICON_SVG_DIR, exist_ok=True)
-    output_path = os.path.join(ICON_SVG_DIR, f"{icon_name}.svg")
+    os.makedirs(ICON_DIR, exist_ok=True)
+    output_path = os.path.join(ICON_DIR, f"{icon_name}.svg")
     tmp_path = f"{output_path}.tmp"
     ET.ElementTree(root).write(tmp_path, encoding="utf-8", xml_declaration=True)
     os.replace(tmp_path, output_path)
 
-    return {
-        "id": icon_name,
-        "name": icon_name.replace("-", " ").title(),
-        "width": float(width),
-        "height": float(height),
-    }
+    return icon_name
 
 
 def sync_and_compile_icons():
@@ -208,7 +180,7 @@ def sync_and_compile_icons():
     ):
         raise ValueError("Invalid source catalog format.")
 
-    custom_catalog = []
+    valid_icon_ids = []
     total = len(source_catalog["icons"])
     print(f"Processing {total} icons...")
 
@@ -216,24 +188,23 @@ def sync_and_compile_icons():
         if i % 100 == 0:
             print(f"  Progress: {i}/{total}")
 
-        meta = process_icon(name, data, source_catalog)
-        if meta:
-            custom_catalog.append(meta)
+        if process_icon(name, data, source_catalog):
+            valid_icon_ids.append(name)
 
-    # Sort by name for easier browsing in admin UI
-    custom_catalog.sort(key=lambda x: x["name"].casefold())
+    # Sort alphabetically for consistent output
+    valid_icon_ids.sort()
 
-    # Store in Database
-    # We store the entire catalog as a JSON blob in site_config. This allows app.py
-    # to load it quickly without file I/O or complex parsing.
+    # Store the simple list of IDs in the Database
+    # We store just the IDs because display names can be reconstructed in the app,
+    # and dimensions are irrelevant as they will be scaled to fit buttons anyway.
     with get_db() as db:
         db.execute("DELETE FROM site_config WHERE key = 'icon_catalog_json'")
         db.execute(
             "INSERT INTO site_config (key, value) VALUES ('icon_catalog_json', ?)",
-            (json.dumps(custom_catalog),),
+            (json.dumps(valid_icon_ids),),
         )
 
-    print(f"Done! Compiled {len(custom_catalog)} valid icons into database.")
+    print(f"Done! Compiled {len(valid_icon_ids)} valid icons into database.")
 
 
 if __name__ == "__main__":

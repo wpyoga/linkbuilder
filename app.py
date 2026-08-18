@@ -2,16 +2,8 @@ import os
 import json
 import sqlite3
 import io
-from flask import (
-    Flask,
-    render_template,
-    request,
-    redirect,
-    url_for,
-    flash,
-    session,
-    send_from_directory,
-)
+import shutil
+from flask import Flask, render_template, request, redirect, url_for, flash, session
 from flask_login import (
     LoginManager,
     UserMixin,
@@ -40,15 +32,18 @@ from config import (
     DEFAULT_DARK_BG,
     ICON_NAME_RE,
     ICON_DIR,
-    ICON_SVG_DIR,
+    OUTPUT_DIR,
     HEX_COLOR_RE,
+    RASTER_FORMAT_EXTENSIONS,
     DEPLOYMENT_SUPERADMIN_USER,
 )
 
 # -----------------------------------------------------------------------------
 # App Factory & Config
 # -----------------------------------------------------------------------------
-app = Flask(__name__, static_folder=ICON_DIR, static_url_path="/icons")
+# We use Flask's standard 'static' folder. Icons live in static/icons/.
+# This allows us to serve them efficiently via Flask's built-in static file handling.
+app = Flask(__name__, static_folder="static", static_url_path="/static")
 
 # Load the secret key. We deliberately do NOT fall back to os.urandom() here.
 # See config.py for the explanation of why silent-random-fallbacks are dangerous
@@ -229,6 +224,88 @@ def generate_vcard_content(vcard: dict) -> str:
     )
 
 
+def validate_link_button(btn, index, valid_icons):
+    """Validate a single 'link' type button."""
+    label = str(btn.get("label", "")).strip()
+    url = str(btn.get("url", "")).strip()
+    if not label:
+        return None, f"Link button #{index+1} is missing a label."
+    if not url:
+        return None, f"Link button #{index+1} is missing a URL."
+
+    color = btn.get("color") or "#28a745"
+    text_color = btn.get("text_color") or "#ffffff"
+    if not HEX_COLOR_RE.fullmatch(color):
+        color = "#28a745"
+    if not HEX_COLOR_RE.fullmatch(text_color):
+        text_color = "#ffffff"
+
+    icon = str(btn.get("icon", "")).strip()
+    if icon and icon not in valid_icons:
+        return None, f"Button #{index+1} uses an unknown brand icon: {icon!r}."
+
+    return {
+        "type": "link",
+        "color": color,
+        "text_color": text_color,
+        "label": label,
+        "url": url,
+        "icon": icon,
+    }, None
+
+
+def validate_vcard_button(btn, index, seen_slugs, valid_icons):
+    """Validate a single 'vcard' type button."""
+    button_label = str(btn.get("button_label", "")).strip() or "Save Contact"
+    slug = slugify(str(btn.get("slug", "")), lowercase=True) or "contact"
+    if slug in seen_slugs:
+        return None, f"Duplicate vCard slug '{slug}' -- slugs must be unique."
+
+    email = str(btn.get("email", "")).strip()
+    phone = str(btn.get("phone", "")).strip()
+    website_url = str(btn.get("url", "")).strip()
+    errors = {}
+
+    if email:
+        try:
+            validate_email(email, check_deliverability=False)
+        except EmailNotValidError:
+            errors["email"] = "Enter a valid email address."
+    if not validate_vcard_phone(phone):
+        errors["phone"] = "Enter a phone number starting with +."
+    if not validate_vcard_website_url(website_url):
+        errors["url"] = "Enter a valid HTTP(S) website URL."
+
+    if errors:
+        return None, errors
+
+    color = btn.get("color") or "#0284c7"
+    text_color = btn.get("text_color") or "#ffffff"
+    if not HEX_COLOR_RE.fullmatch(color):
+        color = "#0284c7"
+    if not HEX_COLOR_RE.fullmatch(text_color):
+        text_color = "#ffffff"
+
+    icon = str(btn.get("icon", "")).strip()
+    if icon and icon not in valid_icons:
+        return None, f"Button #{index+1} uses an unknown brand icon: {icon!r}."
+
+    return {
+        "type": "vcard",
+        "color": color,
+        "text_color": text_color,
+        "button_label": button_label,
+        "icon": icon,
+        "slug": slug,
+        "fn": str(btn.get("fn", "")).strip(),
+        "org": str(btn.get("org", "")).strip(),
+        "title": str(btn.get("title", "")).strip(),
+        "email": email,
+        "phone": phone,
+        "url": website_url,
+    }, None
+
+
 def validate_buttons_payload(raw_json: str):
     """
     Parse and validate the 'buttons_json' field submitted by the admin form.
@@ -242,10 +319,6 @@ def validate_buttons_payload(raw_json: str):
     if not isinstance(parsed, list):
         return None, "Buttons payload must be a JSON array."
 
-    validated = []
-    seen_slugs = set()
-    field_errors = {}
-
     # Load catalog from DB for validation
     valid_icons = set()
     with get_db() as db:
@@ -254,89 +327,35 @@ def validate_buttons_payload(raw_json: str):
         ).fetchone()
         if row and row["value"]:
             try:
-                catalog_data = json.loads(row["value"])
-                valid_icons = {item["id"] for item in catalog_data}
+                valid_icons = set(json.loads(row["value"]))
             except:
                 pass
+
+    validated = []
+    seen_slugs = set()
+    field_errors = {}
 
     for i, btn in enumerate(parsed):
         if not isinstance(btn, dict):
             return None, f"Button #{i+1} is not a JSON object."
         btn_type = btn.get("type")
-        color = btn.get("color") or ("#28a745" if btn_type == "link" else "#0284c7")
-        icon = str(btn.get("icon", "")).strip()
-
-        if icon:
-            if not ICON_NAME_RE.fullmatch(icon):
-                return None, f"Button #{i+1} has an invalid brand icon identifier."
-            if valid_icons and icon not in valid_icons:
-                return None, f"Button #{i+1} uses an unknown brand icon: {icon!r}."
-
-        text_color = btn.get("text_color") or "#ffffff"
-        import re
-
-        if not HEX_COLOR_RE.fullmatch(color):
-            color = "#28a745" if btn_type == "link" else "#0284c7"
-        if not HEX_COLOR_RE.fullmatch(text_color):
-            text_color = "#ffffff"
 
         if btn_type == "link":
-            label = str(btn.get("label", "")).strip()
-            url = str(btn.get("url", "")).strip()
-            if not label:
-                return None, f"Link button #{i+1} is missing a label."
-            if not url:
-                return None, f"Link button #{i+1} is missing a URL."
-            validated.append(
-                {
-                    "type": "link",
-                    "color": color,
-                    "text_color": text_color,
-                    "label": label,
-                    "url": url,
-                    "icon": icon,
-                }
-            )
+            v_btn, error = validate_link_button(btn, i, valid_icons)
         elif btn_type == "vcard":
-            button_label = str(btn.get("button_label", "")).strip() or "Save Contact"
-            # Use python-slugify for robust slug generation
-            slug = slugify(str(btn.get("slug", "")), lowercase=True) or "contact"
-            if slug in seen_slugs:
-                return None, f"Duplicate vCard slug '{slug}' -- slugs must be unique."
-            seen_slugs.add(slug)
-            email = str(btn.get("email", "")).strip()
-            phone = str(btn.get("phone", "")).strip()
-            website_url = str(btn.get("url", "")).strip()
-            errors = {}
-            if email:
-                try:
-                    validate_email(email, check_deliverability=False)
-                except EmailNotValidError:
-                    errors["email"] = "Enter a valid email address."
-            if not validate_vcard_phone(phone):
-                errors["phone"] = "Enter a phone number starting with +."
-            if not validate_vcard_website_url(website_url):
-                errors["url"] = "Enter a valid HTTP(S) website URL."
-            if errors:
-                field_errors[i] = errors
-            validated.append(
-                {
-                    "type": "vcard",
-                    "color": color,
-                    "text_color": text_color,
-                    "button_label": button_label,
-                    "icon": icon,
-                    "slug": slug,
-                    "fn": str(btn.get("fn", "")).strip(),
-                    "org": str(btn.get("org", "")).strip(),
-                    "title": str(btn.get("title", "")).strip(),
-                    "email": email,
-                    "phone": phone,
-                    "url": website_url,
-                }
-            )
+            v_btn, error = validate_vcard_button(btn, i, seen_slugs, valid_icons)
+            if not error:
+                seen_slugs.add(v_btn["slug"])
         else:
             return None, f"Button #{i+1} has an unrecognized type: {btn_type!r}"
+
+        if error:
+            if isinstance(error, dict):
+                field_errors[i] = error
+            else:
+                return None, error
+        else:
+            validated.append(v_btn)
 
     if field_errors:
         return None, field_errors
@@ -348,17 +367,11 @@ def validate_buttons_payload(raw_json: str):
 # -----------------------------------------------------------------------------
 def bake_static_site():
     """Core site generation routine: clears the output directory and writes a fresh static site."""
-    OUTPUT_DIR = os.path.abspath(
-        os.environ.get("OUTPUT_DIR", "/srv/www/example.com/@info")
-    )
-
     # Clear everything INSIDE the output directory, without removing the directory itself.
     # This preserves Docker bind-mounts.
     os.makedirs(OUTPUT_DIR, exist_ok=True)
     for entry in os.scandir(OUTPUT_DIR):
         if entry.is_dir(follow_symlinks=False):
-            import shutil
-
             shutil.rmtree(entry.path)
         else:
             os.remove(entry.path)
@@ -400,15 +413,14 @@ def bake_static_site():
         config = {r["key"]: r["value"] for r in config_rows}
         buttons = json.loads(config.get("buttons_json", "[]"))
 
-    # Copy selected icons from pre-sanitized store to output
+    # Copy selected icons from static/icons/ to the public output directory
+    os.makedirs(os.path.join(OUTPUT_DIR, "icons"), exist_ok=True)
     for btn in buttons:
         icon_name = btn.get("icon")
         if icon_name:
-            src = os.path.join(ICON_SVG_DIR, f"{icon_name}.svg")
-            dst = os.path.join(OUTPUT_DIR, f"icon-{icon_name}.svg")
+            src = os.path.join(ICON_DIR, f"{icon_name}.svg")
+            dst = os.path.join(OUTPUT_DIR, "icons", f"{icon_name}.svg")
             if os.path.exists(src):
-                import shutil
-
                 shutil.copy2(src, dst)
 
     processed_buttons = []
@@ -421,7 +433,7 @@ def bake_static_site():
                     "text_color": btn.get("text_color", "#ffffff"),
                     "label": btn["label"],
                     "icon_filename": (
-                        f"./icon-{btn['icon']}.svg" if btn.get("icon") else None
+                        f"./icons/{btn['icon']}.svg" if btn.get("icon") else None
                     ),
                     "target_url": normalize_url(btn["url"]),
                 }
@@ -445,7 +457,7 @@ def bake_static_site():
                     "text_color": btn.get("text_color", "#ffffff"),
                     "label": btn.get("button_label", "Save Contact"),
                     "icon_filename": (
-                        f"./icon-{btn['icon']}.svg" if btn.get("icon") else None
+                        f"./icons/{btn['icon']}.svg" if btn.get("icon") else None
                     ),
                     "target_url": f"./{slug}.vcf",
                 }
@@ -482,13 +494,18 @@ def bake_static_site():
 
 
 def get_icon_catalog_metadata():
-    """Load the pre-compiled custom catalog from the database."""
+    """Load the pre-compiled custom catalog from the database and format for UI."""
     with get_db() as db:
         row = db.execute(
             "SELECT value FROM site_config WHERE key = 'icon_catalog_json'"
         ).fetchone()
         if row and row["value"]:
-            return json.loads(row["value"])
+            try:
+                ids = json.loads(row["value"])
+                # Reconstruct display names for the admin UI
+                return [{"id": i, "name": i.replace("-", " ").title()} for i in ids]
+            except:
+                pass
     return []
 
 
@@ -511,21 +528,12 @@ def store_uploaded_image(db, file_field_name, blob_key, ext_key):
     # Sniff for SVG first: SVGs are plain text/XML. We reject them here because
     # icon management is now handled exclusively by sync-icons.py.
     head = raw_bytes[:512].lstrip().lower()
-    looks_like_svg = head.startswith(b"<?xml") or b"<svg" in head
-    if looks_like_svg:
+    if head.startswith(b"<?xml") or b"<svg" in head:
         raise ValueError(
             "SVG uploads are disabled. Please use sync-icons.py to manage icons."
         )
 
     # Otherwise, treat it as a raster image and let Pillow verify the structure.
-    RASTER_FORMAT_EXTENSIONS = {
-        "PNG": ".png",
-        "JPEG": ".jpg",
-        "GIF": ".gif",
-        "WEBP": ".webp",
-        "ICO": ".ico",
-        "BMP": ".bmp",
-    }
     try:
         with Image.open(io.BytesIO(raw_bytes)) as img:
             img.verify()
@@ -620,17 +628,6 @@ def admin():
     icon_catalog = get_icon_catalog_metadata()
     return render_template(
         "admin.jinja2", data=data, user=current_user, icon_catalog=icon_catalog
-    )
-
-
-@app.route("/icons/svg/<icon_name>.svg")
-@login_required
-def logo_icon(icon_name):
-    """Serve icons as static files from the pre-sanitized directory."""
-    if not ICON_NAME_RE.fullmatch(icon_name):
-        return ("Invalid icon name", 400)
-    return send_from_directory(
-        ICON_SVG_DIR, f"{icon_name}.svg", mimetype="image/svg+xml"
     )
 
 

@@ -22,18 +22,27 @@ SECRET_KEY_FILE = os.environ.get(
 )
 
 # -----------------------------------------------------------------------------
-# Icon Configuration
+# Static Assets & Icons
 # -----------------------------------------------------------------------------
-# Icons are stored in a dedicated 'icons' directory. SVGs are pre-sanitized and filtered
-# by sync-icons.py, then served statically by app.py.
-ICON_DIR = os.path.abspath(os.environ.get("ICON_DIR", os.path.join(BASE_DIR, "icons")))
-ICON_SVG_DIR = os.path.join(ICON_DIR, "svg")
+# We use Flask's standard 'static' folder. Icons are pre-sanitized and stored here.
+# This allows us to serve them efficiently via Flask's built-in static file handling.
+STATIC_DIR = os.path.join(BASE_DIR, "static")
+ICON_DIR = os.path.join(STATIC_DIR, "icons")
 
 # Source URL for the upstream Iconify catalog. We download this, filter it, and store
 # our own custom catalog in the database.
 ICON_SRC_URL = os.environ.get(
     "ICON_CATALOG_URL",
     "https://raw.githubusercontent.com/iconify/icon-sets/master/json/logos.json",
+)
+
+# -----------------------------------------------------------------------------
+# Output & Deployment
+# -----------------------------------------------------------------------------
+# The public-facing static site is baked here. It is intended to be uploaded via FTP
+# to a web hoster, while the admin site is served over a secure channel like VPN.
+OUTPUT_DIR = os.path.abspath(
+    os.environ.get("OUTPUT_DIR", os.path.join(BASE_DIR, "public_site"))
 )
 
 # -----------------------------------------------------------------------------
@@ -50,6 +59,18 @@ HEX_COLOR_RE = re.compile(r"^#[0-9a-fA-F]{6}$")
 # Regex for validating icon identifiers. Must be lowercase alphanumeric with hyphens.
 # This matches the naming convention of the Iconify 'logos' set.
 ICON_NAME_RE = re.compile(r"^[a-z0-9][a-z0-9-]*$")
+
+# Raster formats we accept for favicon/logo uploads, mapped to the extension we'll write
+# to disk. Keyed by Pillow's reported `Image.format` string, which reflects the file's
+# actual decoded structure -- not the filename the browser sent us.
+RASTER_FORMAT_EXTENSIONS = {
+    "PNG": ".png",
+    "JPEG": ".jpg",
+    "GIF": ".gif",
+    "WEBP": ".webp",
+    "ICO": ".ico",
+    "BMP": ".bmp",
+}
 
 # Administrative bootstrap username. Unlike the password, a predictable default username
 # is not a meaningful security weakness on its own (usernames aren't secret).
