@@ -45,6 +45,9 @@
             border: 1px solid #ccc;
             border-radius: 4px;
             font-family: inherit;
+            /* Ensure consistent height calculation across browsers */
+            line-height: 1.5;
+            font-size: 1rem;
         }
 
         button { cursor: pointer; font-family: inherit; }
@@ -59,29 +62,63 @@
         .alert-danger { background: #f8d7da; color: #721c24; }
 
         /* --- Password Toggle Utility --- */
-        .password-field { position: relative; }
-        .password-field input { padding-right: 44px; }
+        .password-field { 
+            position: relative; 
+            /* Use flex to ensure proper alignment of children */
+            display: flex;
+            align-items: stretch;
+        }
+        .password-field input { 
+            padding-right: 44px; 
+            margin-top: 5px;
+            flex: 1;
+        }
         .password-toggle {
             position: absolute;
-            top: 5px;
+            /* Center vertically within the field container */
+            top: 50%;
+            transform: translateY(-50%);
             right: 0;
+            /* Match input height: (line-height * font-size) + (padding * 2) + (border * 2) */
+            height: calc(1.5em + 16px + 2px);
             width: 40px;
-            height: 42px;
             margin: 0;
             padding: 0;
             background: transparent;
             color: #475569;
             border: 0;
             border-radius: 0 4px 4px 0;
+            /* Align with input's top margin */
+            margin-top: 5px;
         }
         .password-toggle:hover { color: #0066cc; }
-        .password-toggle svg { width: 20px; height: 20px; display: block; margin: auto; }
+        .password-toggle:focus {
+            outline: 2px solid #0066cc;
+            outline-offset: -2px;
+        }
+        .password-toggle svg { 
+            width: 20px; 
+            height: 20px; 
+            display: block; 
+            margin: auto; 
+        }
     </style>
     {% block extra_head %}{% endblock %}
   </head>
   <body>
     {% block content %}{% endblock %}
-    {% block scripts %}{% endblock %}
+    {% block scripts %}
+      <script>
+      // Global utility for password visibility toggling
+      function togglePasswordVisibility(toggleButton) {
+          const input = toggleButton.parentElement.querySelector("input");
+          if (!input) return;
+          const visible = input.type === "text";
+          input.type = visible ? "password" : "text";
+          toggleButton.setAttribute("aria-label", visible ? "Show password" : "Hide password");
+      }
+      </script>
+    {% endblock %}
   </body>
 </html>
 {# --- Macros --- #}

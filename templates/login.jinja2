@@ -27,13 +27,3 @@
     </div>
   </div>
 {% endblock %}
-{% block scripts %}
-  <script>
-    function togglePasswordVisibility(toggleButton) {
-        const input = toggleButton.parentElement.querySelector("input");
-        const visible = input.type === "text";
-        input.type = visible ? "password" : "text";
-        toggleButton.setAttribute("aria-label", visible ? "Show password" : "Hide password");
-    }
-  </script>
-{% endblock %}
