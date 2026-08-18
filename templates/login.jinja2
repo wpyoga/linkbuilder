@@ -1,4 +1,4 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
@@ -31,12 +31,8 @@
         border-radius: 4px;
         box-sizing: border-box;
       }
-      .password-field {
-        position: relative;
-      }
-      .password-field input {
-        padding-right: 44px;
-      }
+      .password-field { position: relative; }
+      .password-field input { padding-right: 44px; }
       .password-toggle {
         position: absolute;
         top: 5px;
@@ -51,16 +47,8 @@
         border-radius: 0 4px 4px 0;
         cursor: pointer;
       }
-      .password-toggle:hover,
-      .password-toggle:focus-visible {
-        color: #0066cc;
-      }
-      .password-toggle svg {
-        width: 20px;
-        height: 20px;
-        display: block;
-        margin: auto;
-      }
+      .password-toggle:hover, .password-toggle:focus-visible { color: #0066cc; }
+      .password-toggle svg { width: 20px; height: 20px; display: block; margin: auto; }
       button {
         width: 100%;
         padding: 10px;
@@ -72,12 +60,7 @@
         font-size: 1rem;
         cursor: pointer;
       }
-      .alert {
-        padding: 10px;
-        border-radius: 4px;
-        margin-bottom: 15px;
-        font-size: 0.9rem;
-      }
+      .alert { padding: 10px; border-radius: 4px; margin-bottom: 15px; font-size: 0.9rem; }
       .alert-danger { background: #f8d7da; color: #721c24; }
       .alert-success { background: #d4edda; color: #155724; }
     </style>
@@ -85,32 +68,38 @@
   <body>
     <div class="card">
       <h2>Admin Login</h2>
-
       {% set messages = get_flashed_messages(with_categories=true) %}
       {% if messages %}
-        {% for category, message in messages %}
-          <div class="alert alert-{{ category }}">{{ message }}</div>
-        {% endfor %}
+        {% for category, message in messages %}<div class="alert alert-{{ category }}">{{ message }}</div>{% endfor %}
       {% endif %}
-
       <form method="POST" action="/login">
-        {# CSRF token required by flask-wtf's CSRFProtect (enabled app-wide in app.py). #}
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
-
         <label>Username</label>
         <input type="text" name="username" required autofocus placeholder="Username" />
-
         <label for="login-password">Password</label>
         <div class="password-field">
-          <input id="login-password" type="password" name="password" required placeholder="Password" />
-          <button type="button" class="password-toggle" aria-label="Show password" aria-pressed="false" onclick="togglePasswordVisibility(this)">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <input id="login-password"
+                 type="password"
+                 name="password"
+                 required
+                 placeholder="Password" />
+          <button type="button"
+                  class="password-toggle"
+                  aria-label="Show password"
+                  aria-pressed="false"
+                  onclick="togglePasswordVisibility(this)">
+            <svg viewBox="0 0 24 24"
+                 fill="none"
+                 stroke="currentColor"
+                 stroke-width="2"
+                 stroke-linecap="round"
+                 stroke-linejoin="round"
+                 aria-hidden="true">
               <path d="M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6S2 12 2 12Z" />
               <circle cx="12" cy="12" r="2.5" />
             </svg>
           </button>
         </div>
-
         <button type="submit">Log In</button>
       </form>
     </div>

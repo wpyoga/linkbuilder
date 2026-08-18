@@ -13,8 +13,6 @@
         --text-color: #0f172a;
         --subtext-color: #475569;
       }
-
-      /* Explicit Theme Definitions */
       html[data-theme="light"] {
         --bg-color: var(--light-bg-color);
         --text-color: #0f172a;
@@ -25,8 +23,6 @@
         --text-color: #f8fafc;
         --subtext-color: #94a3b8;
       }
-
-      /* Automatic OS / Browser Dark Mode Handling */
       @media (prefers-color-scheme: dark) {
         html[data-theme="auto"] {
           --bg-color: var(--dark-bg-color);
@@ -41,7 +37,6 @@
           --subtext-color: #475569;
         }
       }
-
       body {
         font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
         background-color: var(--bg-color);
@@ -88,13 +83,13 @@
       .btn:hover {
         opacity: 0.9;
       }
-     .btn-icon {
-       width: 22px;
-       height: 22px;
-       margin-right: 8px;
-       vertical-align: middle;
-       object-fit: contain;
-     }
+      .btn-icon {
+        width: 22px;
+        height: 22px;
+        margin-right: 8px;
+        vertical-align: middle;
+        object-fit: contain;
+      }
     </style>
   </head>
   <body>
@@ -111,7 +106,8 @@
              target="{{ '_blank' if btn.type == 'link' else '_self' }}"
              rel="{{ 'noopener noreferrer' if btn.type == 'link' else '' }}">
             {% if btn.icon_filename %}<img src="{{ btn.icon_filename }}" alt="" class="btn-icon" />{% endif %}
-          {{ btn.label }}</a>
+            {{ btn.label }}
+          </a>
         {% endfor %}
       </div>
     </div>
