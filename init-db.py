@@ -8,7 +8,6 @@ from common import get_db, SECRET_KEY_FILE, DEPLOYMENT_SUPERADMIN_USER
 def init_db():
     os.makedirs(os.path.dirname(SECRET_KEY_FILE) or ".", exist_ok=True)
 
-    # Generate secret key if missing
     if not os.path.exists(SECRET_KEY_FILE):
         secret_key = secrets.token_hex(32)
         with open(SECRET_KEY_FILE, "w") as _f:
@@ -17,20 +16,18 @@ def init_db():
         print(f"Generated secret key file: {SECRET_KEY_FILE}")
 
     with get_db() as db:
-        db.execute("""
-            CREATE TABLE IF NOT EXISTS users (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                username TEXT UNIQUE NOT NULL,
-                password_hash TEXT NOT NULL,
-                password_change_required INTEGER NOT NULL DEFAULT 1
-            )""")
+        db.execute("""CREATE TABLE IF NOT EXISTS users (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            username TEXT UNIQUE NOT NULL,
+            password_hash TEXT NOT NULL,
+            password_change_required INTEGER NOT NULL DEFAULT 1
+        )""")
 
-        db.execute("""
-            CREATE TABLE IF NOT EXISTS site_config (
-                key TEXT PRIMARY KEY,
-                value TEXT,
-                blob_value BLOB
-            )""")
+        db.execute("""CREATE TABLE IF NOT EXISTS site_config (
+            key TEXT PRIMARY KEY,
+            value TEXT,
+            blob_value BLOB
+        )""")
 
         existing = db.execute(
             "SELECT id FROM users WHERE username = ?", (DEPLOYMENT_SUPERADMIN_USER,)
@@ -53,9 +50,7 @@ def init_db():
 
             if generated:
                 print("=" * 60)
-                print(
-                    "Generated superadmin password (shown once, not stored anywhere):"
-                )
+                print("Generated superadmin password (shown once):")
                 print(f"  username: {DEPLOYMENT_SUPERADMIN_USER}")
                 print(f"  password: {password}")
                 print("=" * 60)

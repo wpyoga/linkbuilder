@@ -1,5 +1,6 @@
 import os
 import json
+import sqlite3
 from flask import (
     Flask,
     render_template,
@@ -8,7 +9,7 @@ from flask import (
     url_for,
     flash,
     session,
-    Response,
+    send_from_directory,
 )
 from flask_login import (
     LoginManager,
@@ -26,28 +27,29 @@ from email_validator import EmailNotValidError, validate_email
 import phonenumbers
 from phonenumbers.phonenumberutil import NumberParseException
 from urllib.parse import urlparse
+from PIL import Image, UnidentifiedImageError
+import io
 
 from common import (
     get_db,
-    load_icon_catalog,
-    validate_and_normalize_image,
-    get_site_data,
     validate_hex_color,
-    sanitize_svg,
+    sanitize_slug,
     SECRET_KEY_FILE,
     ALLOWED_THEMES,
     DEFAULT_LIGHT_BACKGROUND,
     DEFAULT_DARK_BACKGROUND,
     ICON_NAME_RE,
     OUTPUT_DIR,
+    CUSTOM_ICON_CATALOG_PATH,
+    ICON_SVG_DIR,
+    RASTER_FORMAT_EXTENSIONS,
 )
 
 # -----------------------------------------------------------------------------
 # App Factory & Config
 # -----------------------------------------------------------------------------
-app = Flask(__name__)
+app = Flask(__name__, static_folder="static")  # Ensure static folder is configured
 
-# Secret Key Loading
 if os.environ.get("FLASK_SECRET_KEY"):
     app.secret_key = os.environ["FLASK_SECRET_KEY"]
 elif os.path.exists(SECRET_KEY_FILE):
@@ -64,10 +66,7 @@ def enforce_secret_key():
             with open(SECRET_KEY_FILE, "rb") as _f:
                 app.secret_key = _f.read().strip()
         else:
-            raise RuntimeError(
-                f"No secret key found. Run `python init-db.py` to generate one. "
-                f"Expected: {SECRET_KEY_FILE!r}"
-            )
+            raise RuntimeError(f"No secret key found. Run `python init-db.py`.")
 
 
 app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_prefix=1)
@@ -85,7 +84,7 @@ csrf = CSRFProtect(app)
 def handle_csrf_error(error):
     logout_user()
     session.clear()
-    flash("Your session has expired. Please log in again.", "danger")
+    flash("Session expired. Please log in again.", "danger")
     return redirect(url_for("login"))
 
 
@@ -123,14 +122,6 @@ def load_user(user_id):
 # Validation Helpers (Route-Specific)
 # -----------------------------------------------------------------------------
 ALLOWED_URL_SCHEMES = {"http", "https", "mailto", "tel", "sms"}
-
-
-def sanitize_slug(name: str) -> str:
-    name = (name or "").strip().lower()
-    import re
-
-    name = re.sub(r"[^a-z0-9_\-]", "_", name)
-    return name or "contact"
 
 
 def normalize_url(url: str) -> str:
@@ -199,29 +190,33 @@ def validate_buttons_payload(raw_json: str):
     try:
         parsed = json.loads(raw_json)
     except (TypeError, ValueError):
-        return None, "Buttons payload was not valid JSON."
+        return None, "Invalid JSON."
     if not isinstance(parsed, list):
-        return None, "Buttons payload must be a JSON array."
+        return None, "Must be a JSON array."
 
     validated = []
     seen_slugs = set()
     field_errors = {}
-    catalog = None
+
+    # Load custom catalog for validation
     try:
-        catalog = load_icon_catalog()
+        with open(CUSTOM_ICON_CATALOG_PATH, "r") as f:
+            catalog_data = json.load(f)
+            valid_icons = {item["id"] for item in catalog_data["icons"]}
     except Exception:
-        pass
+        valid_icons = set()
 
     for i, btn in enumerate(parsed):
         if not isinstance(btn, dict):
-            return None, f"Button #{i+1} is not a JSON object."
+            return None, f"Button #{i+1} invalid."
         btn_type = btn.get("type")
         color = btn.get("color") or ("#28a745" if btn_type == "link" else "#0284c7")
         icon = str(btn.get("icon", "")).strip()
+
         if icon:
             if not ICON_NAME_RE.fullmatch(icon):
                 return None, f"Button #{i+1} invalid icon ID."
-            if catalog and icon not in catalog["icons"]:
+            if valid_icons and icon not in valid_icons:
                 return None, f"Button #{i+1} unknown icon: {icon!r}"
 
         text_color = btn.get("text_color") or "#ffffff"
@@ -253,7 +248,7 @@ def validate_buttons_payload(raw_json: str):
             button_label = str(btn.get("button_label", "")).strip() or "Save Contact"
             slug = sanitize_slug(str(btn.get("slug", "")))
             if slug in seen_slugs:
-                return None, f"Duplicate vCard slug '{slug}'"
+                return None, f"Duplicate slug '{slug}'"
             seen_slugs.add(slug)
             email = str(btn.get("email", "")).strip()
             phone = str(btn.get("phone", "")).strip()
@@ -263,11 +258,11 @@ def validate_buttons_payload(raw_json: str):
                 try:
                     validate_email(email, check_deliverability=False)
                 except EmailNotValidError:
-                    errors["email"] = "Enter a valid email address."
+                    errors["email"] = "Invalid email."
             if not validate_vcard_phone(phone):
-                errors["phone"] = "Invalid phone format."
+                errors["phone"] = "Invalid phone."
             if not validate_vcard_website_url(website_url):
-                errors["url"] = "Enter a valid HTTP(S) URL."
+                errors["url"] = "Invalid URL."
             if errors:
                 field_errors[i] = errors
             validated.append(
@@ -287,7 +282,7 @@ def validate_buttons_payload(raw_json: str):
                 }
             )
         else:
-            return None, f"Button #{i+1} unrecognized type: {btn_type!r}"
+            return None, f"Button #{i+1} bad type: {btn_type!r}"
 
     if field_errors:
         return None, field_errors
@@ -336,20 +331,24 @@ def bake_static_site():
             with open(os.path.join(OUTPUT_DIR, logo_filename), "wb") as f:
                 f.write(logo_row["blob_value"])
 
-    data = get_site_data()
-    # Export selected icons
-    for icon_name in sorted(
-        {btn.get("icon") for btn in data.get("buttons", []) if btn.get("icon")}
-    ):
-        try:
-            svg_bytes = get_icon_svg(icon_name)
-            with open(os.path.join(OUTPUT_DIR, f"icon-{icon_name}.svg"), "wb") as f:
-                f.write(svg_bytes)
-        except KeyError:
-            raise ValueError(f"Unknown brand icon: {icon_name!r}")
+    # Get site data
+    config_rows = db.execute("SELECT key, value FROM site_config").fetchall()
+    config = {r["key"]: r["value"] for r in config_rows}
+    buttons = json.loads(config.get("buttons_json", "[]"))
+
+    # Copy selected icons from pre-sanitized store to output
+    for btn in buttons:
+        icon_name = btn.get("icon")
+        if icon_name:
+            src = os.path.join(ICON_SVG_DIR, f"{icon_name}.svg")
+            dst = os.path.join(OUTPUT_DIR, f"icon-{icon_name}.svg")
+            if os.path.exists(src):
+                import shutil
+
+                shutil.copy2(src, dst)
 
     processed_buttons = []
-    for btn in data.get("buttons", []):
+    for btn in buttons:
         if btn["type"] == "link":
             processed_buttons.append(
                 {
@@ -389,47 +388,41 @@ def bake_static_site():
             )
 
     ctx = {
-        "title": data["title"],
-        "bio": data["bio"],
-        "theme": data.get("theme", "auto"),
-        "background_light": data.get("background_light", DEFAULT_LIGHT_BACKGROUND),
-        "background_dark": data.get("background_dark", DEFAULT_DARK_BACKGROUND),
+        "title": config.get("title", ""),
+        "bio": config.get("bio", ""),
+        "theme": (
+            config.get("theme", "auto")
+            if config.get("theme", "auto") in ALLOWED_THEMES
+            else "auto"
+        ),
+        "background_light": (
+            config.get("background_light")
+            if validate_hex_color(config.get("background_light", ""))
+            else DEFAULT_LIGHT_BACKGROUND
+        ),
+        "background_dark": (
+            config.get("background_dark")
+            if validate_hex_color(config.get("background_dark", ""))
+            else DEFAULT_DARK_BACKGROUND
+        ),
         "favicon_filename": favicon_filename,
         "org_logo_filename": logo_filename,
         "buttons": processed_buttons,
     }
+
     html = render_template("site_template.jinja2", data=ctx)
     with open(os.path.join(OUTPUT_DIR, "index.html"), "w", encoding="utf-8") as f:
         f.write(html)
 
 
-def get_icon_svg(icon_name: str) -> bytes:
-    if not ICON_NAME_RE.fullmatch(icon_name):
-        raise KeyError(icon_name)
-    catalog = load_icon_catalog()
-    if icon_name not in catalog["icons"]:
-        raise KeyError(icon_name)
-    path = os.path.join(
-        os.path.dirname(catalog.get("_path", "static/icons/logos.json")),
-        "svg",
-        f"{icon_name}.svg",
-    )
-    # Fallback to common path structure if _path isn't set
-    from common import ICON_SVG_DIR
-
-    path = os.path.join(ICON_SVG_DIR, f"{icon_name}.svg")
-    with open(path, "rb") as f:
-        return sanitize_svg(f.read())
-
-
 def get_icon_catalog_metadata():
-    catalog = load_icon_catalog()
-    return [
-        {"id": n, "name": n.replace("-", " ").title()}
-        for n in sorted(
-            catalog["icons"], key=lambda v: v.replace("-", " ").title().casefold()
-        )
-    ]
+    """Load the pre-compiled custom catalog."""
+    try:
+        with open(CUSTOM_ICON_CATALOG_PATH, "r") as f:
+            data = json.load(f)
+            return data["icons"]
+    except Exception:
+        return []
 
 
 def store_uploaded_image(db, file_field_name, blob_key, ext_key):
@@ -438,10 +431,34 @@ def store_uploaded_image(db, file_field_name, blob_key, ext_key):
     file = request.files[file_field_name]
     if not file or file.filename == "":
         return
-    image_bytes, ext = validate_and_normalize_image(file)
+
+    raw_bytes = file.read()
+    if not raw_bytes:
+        raise ValueError("Empty file.")
+
+    # Simple raster validation
+    head = raw_bytes[:512].lstrip().lower()
+    looks_like_svg = head.startswith(b"<?xml") or b"<svg" in head
+    if looks_like_svg:
+        raise ValueError(
+            "SVG uploads disabled in admin. Use sync-icons.py to manage icons."
+        )
+
+    try:
+        with Image.open(io.BytesIO(raw_bytes)) as img:
+            img.verify()
+        with Image.open(io.BytesIO(raw_bytes)) as img:
+            fmt = img.format
+    except UnidentifiedImageError:
+        raise ValueError("Not a valid image.")
+
+    ext = RASTER_FORMAT_EXTENSIONS.get(fmt)
+    if not ext:
+        raise ValueError(f"Format {fmt} unsupported.")
+
     db.execute(
         "INSERT OR REPLACE INTO site_config (key, value, blob_value) VALUES (?, 'present', ?)",
-        (blob_key, sqlite3.Binary(image_bytes)),
+        (blob_key, sqlite3.Binary(raw_bytes)),
     )
     db.execute(
         "INSERT OR REPLACE INTO site_config (key, value) VALUES (?, ?)", (ext_key, ext)
@@ -497,24 +514,38 @@ def logout():
 def admin():
     if current_user.password_change_required:
         return redirect(url_for("change_password"))
-    data = get_site_data()
-    try:
-        icon_catalog = get_icon_catalog_metadata()
-    except Exception:
-        icon_catalog = []
-        flash("Icons unavailable.", "danger")
+
+    # Load site data manually for admin view
+    with get_db() as db:
+        config_rows = db.execute("SELECT key, value FROM site_config").fetchall()
+        config = {r["key"]: r["value"] for r in config_rows}
+        buttons = json.loads(config.get("buttons_json", "[]"))
+        data = {
+            "title": config.get("title", ""),
+            "bio": config.get("bio", ""),
+            "theme": config.get("theme", "auto"),
+            "background_light": config.get(
+                "background_light", DEFAULT_LIGHT_BACKGROUND
+            ),
+            "background_dark": config.get("background_dark", DEFAULT_DARK_BACKGROUND),
+            "buttons": buttons,
+        }
+
+    icon_catalog = get_icon_catalog_metadata()
     return render_template(
         "admin.jinja2", data=data, user=current_user, icon_catalog=icon_catalog
     )
 
 
+# Serve icons as static files from the pre-sanitized directory
 @app.route("/icons/logos/<icon_name>.svg")
 @login_required
 def logo_icon(icon_name):
-    try:
-        return Response(get_icon_svg(icon_name), mimetype="image/svg+xml")
-    except (KeyError, ValueError):
-        return ("Unknown brand icon.", 404)
+    if not ICON_NAME_RE.fullmatch(icon_name):
+        return ("Invalid icon name", 400)
+    return send_from_directory(
+        ICON_SVG_DIR, f"{icon_name}.svg", mimetype="image/svg+xml"
+    )
 
 
 @app.route("/change-password", methods=["GET", "POST"])
@@ -563,10 +594,6 @@ def save():
         posted_btns = json.loads(raw_btns)
     except:
         posted_btns = []
-    try:
-        icon_cat = get_icon_catalog_metadata()
-    except:
-        icon_cat = []
 
     state = {
         "title": title,
@@ -586,32 +613,15 @@ def save():
         )
     if theme not in ALLOWED_THEMES:
         flash("Invalid theme.", "danger")
-        return (
-            render_template(
-                "admin.jinja2", data=state, user=current_user, icon_catalog=icon_cat
-            ),
-            400,
-        )
+        return render_template("admin.jinja2", data=state, user=current_user), 400
     if not validate_hex_color(bg_l) or not validate_hex_color(bg_d):
         flash("Invalid hex colors.", "danger")
-        return (
-            render_template(
-                "admin.jinja2", data=state, user=current_user, icon_catalog=icon_cat
-            ),
-            400,
-        )
+        return render_template("admin.jinja2", data=state, user=current_user), 400
     if error:
         flash(f"Error: {error}", "danger")
-        return (
-            render_template(
-                "admin.jinja2", data=state, user=current_user, icon_catalog=icon_cat
-            ),
-            400,
-        )
+        return render_template("admin.jinja2", data=state, user=current_user), 400
 
     try:
-        import sqlite3
-
         with get_db() as db:
             for k, v in [
                 ("title", title),
@@ -629,21 +639,11 @@ def save():
             store_uploaded_image(db, "org_logo", "org_logo_blob", "org_logo_ext")
     except ValueError as e:
         flash(f"Image error: {e}", "danger")
-        return (
-            render_template(
-                "admin.jinja2", data=state, user=current_user, icon_catalog=icon_cat
-            ),
-            400,
-        )
+        return render_template("admin.jinja2", data=state, user=current_user), 400
     except Exception as e:
         app.logger.error(f"DB Error: {e}")
         flash("Database error.", "danger")
-        return (
-            render_template(
-                "admin.jinja2", data=state, user=current_user, icon_catalog=icon_cat
-            ),
-            500,
-        )
+        return render_template("admin.jinja2", data=state, user=current_user), 500
 
     try:
         bake_static_site()
