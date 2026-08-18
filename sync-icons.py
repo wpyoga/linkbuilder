@@ -4,26 +4,48 @@ import io
 import json
 import math
 import urllib.request
-
 import defusedxml.ElementTree as DefusedET
 import xml.etree.ElementTree as ET
 from svgelements import SVG
+import sqlite3
+from contextlib import contextmanager
 
-from common import (
-    ICON_CATALOG_SRC_URL,
-    CUSTOM_ICON_CATALOG_PATH,
-    ICON_SVG_DIR,
-    ICON_NAME_RE,
-)
+from config import ICON_SRC_URL, ICON_SVG_DIR, DB_PATH, ICON_NAME_RE
 
-# SVG Sanitization Constants
+# SVG elements that are never allowed to survive sanitization, regardless of namespace.
+# <script> is the direct code-execution vector; <foreignObject> can embed arbitrary
+# non-SVG markup (including HTML <script>); <iframe> can load external content.
 SVG_DISALLOWED_TAGS = {"script", "foreignObject", "iframe"}
+
+# Attributes stripped from every surviving SVG element: any event handler (onload, onclick...)
+# plus href/xlink:href, which can be used to reference and load external/remote content.
 SVG_DISALLOWED_ATTR_PREFIXES = ("on",)
 SVG_DISALLOWED_ATTRS = {"href", "xlink:href"}
 
 
+@contextmanager
+def get_db():
+    """Context manager for database access during sync."""
+    conn = sqlite3.connect(DB_PATH)
+    conn.execute("PRAGMA foreign_keys = ON;")
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+    try:
+        yield cursor
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        cursor.close()
+        conn.close()
+
+
 def calculate_svg_bbox(svg):
-    """Calculate bounding box of drawable SVG content."""
+    """
+    Calculate the bounding box of drawable SVG content.
+    Returns (xmin, ymin, xmax, ymax) or None if empty.
+    """
     bbox = None
     for element in svg.elements():
         try:
@@ -58,7 +80,11 @@ def calculate_svg_bbox(svg):
 
 
 def sanitize_svg_root(root):
-    """Strip dangerous tags and attributes from an XML Element."""
+    """
+    Strip disallowed elements and attributes from an XML Element tree.
+    This is an allowlist-by-removal approach: we remove the small set of constructs
+    that are unambiguously script-or-external-load vectors.
+    """
 
     def strip_attrs(el):
         for attr_name in list(el.attrib.keys()):
@@ -86,10 +112,11 @@ def sanitize_svg_root(root):
 def process_icon(icon_name, icon_data, source_catalog):
     """
     Process a single icon:
-    1. Check aspect ratio filter.
-    2. Sanitize SVG.
-    3. Calculate precise viewBox.
+    1. Check aspect ratio filter (0.75 - 1.33).
+    2. Sanitize SVG (remove scripts/event handlers).
+    3. Calculate precise viewBox based on geometry.
     4. Write to disk.
+
     Returns metadata dict if successful, None if filtered out.
     """
     source_width = icon_data.get("width", source_catalog.get("width", 24))
@@ -99,7 +126,7 @@ def process_icon(icon_name, icon_data, source_catalog):
     if not body:
         return None
 
-    # Construct initial SVG
+    # Construct initial SVG wrapper
     xmlns = 'xmlns="http://www.w3.org/2000/svg"'
     if "xlink:href=" in body:
         xmlns += ' xmlns:xlink="http://w3.org"'
@@ -119,10 +146,10 @@ def process_icon(icon_name, icon_data, source_catalog):
     )
     root.extend(body_root)
 
-    # Sanitize immediately
+    # Sanitize immediately before any further processing
     root = sanitize_svg_root(root)
 
-    # Parse for geometry calculation
+    # Parse for geometry calculation using svgelements
     svg_bytes = ET.tostring(root, encoding="utf-8")
     try:
         svg_obj = SVG.parse(io.BytesIO(svg_bytes))
@@ -141,16 +168,18 @@ def process_icon(icon_name, icon_data, source_catalog):
         return None
 
     # FILTER: Aspect Ratio Check (0.75 to 1.33)
-    aspect_ratio = height / width
-    if not (0.75 <= aspect_ratio <= 1.33):
+    # We discard icons that are too tall or too wide to ensure visual consistency
+    # in the button layout.
+    if not (0.75 <= (height / width) <= 1.33):
         return None
 
-    # Update SVG attributes with precise bounds
+    # Update SVG attributes with precise bounds to remove excess whitespace
     root.set("viewBox", f"{xmin:g} {ymin:g} {width:g} {height:g}")
     root.set("width", f"{width:g}")
     root.set("height", f"{height:g}")
 
     # Write to disk
+    os.makedirs(ICON_SVG_DIR, exist_ok=True)
     output_path = os.path.join(ICON_SVG_DIR, f"{icon_name}.svg")
     tmp_path = f"{output_path}.tmp"
     ET.ElementTree(root).write(tmp_path, encoding="utf-8", xml_declaration=True)
@@ -165,9 +194,10 @@ def process_icon(icon_name, icon_data, source_catalog):
 
 
 def sync_and_compile_icons():
+    """Download, filter, sanitize, and store the icon catalog."""
     print("Downloading source catalog...")
     req = urllib.request.Request(
-        ICON_CATALOG_SRC_URL, headers={"User-Agent": "Linkbuilder/1.0"}
+        ICON_SRC_URL, headers={"User-Agent": "Linkbuilder/1.0"}
     )
     with urllib.request.urlopen(req, timeout=30) as resp:
         source_payload = resp.read()
@@ -177,9 +207,6 @@ def sync_and_compile_icons():
         source_catalog.get("icons"), dict
     ):
         raise ValueError("Invalid source catalog format.")
-
-    os.makedirs(ICON_SVG_DIR, exist_ok=True)
-    os.makedirs(os.path.dirname(CUSTOM_ICON_CATALOG_PATH), exist_ok=True)
 
     custom_catalog = []
     total = len(source_catalog["icons"])
@@ -196,15 +223,17 @@ def sync_and_compile_icons():
     # Sort by name for easier browsing in admin UI
     custom_catalog.sort(key=lambda x: x["name"].casefold())
 
-    # Write custom catalog
-    tmp_cat = f"{CUSTOM_ICON_CATALOG_PATH}.tmp"
-    with open(tmp_cat, "w", encoding="utf-8") as f:
-        json.dump({"icons": custom_catalog}, f, indent=2)
-    os.replace(tmp_cat, CUSTOM_ICON_CATALOG_PATH)
+    # Store in Database
+    # We store the entire catalog as a JSON blob in site_config. This allows app.py
+    # to load it quickly without file I/O or complex parsing.
+    with get_db() as db:
+        db.execute("DELETE FROM site_config WHERE key = 'icon_catalog_json'")
+        db.execute(
+            "INSERT INTO site_config (key, value) VALUES ('icon_catalog_json', ?)",
+            (json.dumps(custom_catalog),),
+        )
 
-    print(
-        f"Done! Compiled {len(custom_catalog)} valid icons to {CUSTOM_ICON_CATALOG_PATH}"
-    )
+    print(f"Done! Compiled {len(custom_catalog)} valid icons into database.")
 
 
 if __name__ == "__main__":
