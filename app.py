@@ -3,6 +3,10 @@ import json
 import sqlite3
 import io
 import shutil
+from contextlib import contextmanager
+from urllib.parse import urlparse
+from pathlib import Path
+
 from flask import Flask, render_template, request, redirect, url_for, flash, session
 from flask_login import (
     LoginManager,
@@ -19,11 +23,8 @@ from werkzeug.middleware.proxy_fix import ProxyFix
 from email_validator import EmailNotValidError, validate_email
 import phonenumbers
 from phonenumbers.phonenumberutil import NumberParseException
-from urllib.parse import urlparse
-from pathlib import Path
 from PIL import Image, UnidentifiedImageError
 from slugify import slugify
-from contextlib import contextmanager
 
 from config import (
     DB_PATH,

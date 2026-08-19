@@ -1,11 +1,11 @@
-#!/usr/bin/env python3
 import os
 import io
-from pathlib import Path
 import json
 import math
 import urllib.request
+from pathlib import Path
 from xml.etree import ElementTree as ET
+
 from defusedxml import ElementTree as DefusedET
 from svgelements import SVG
 
