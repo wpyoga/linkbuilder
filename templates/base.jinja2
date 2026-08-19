@@ -7,101 +7,97 @@
       {% block title %}Linkbuilder{% endblock %}
     </title>
     <style>
-        /* --- Global Reset & Base Styles --- */
-        body {
-            font-family: system-ui, -apple-system, sans-serif;
-            margin: 0;
-            background: #f4f4f9;
-            color: #333;
-            line-height: 1.5;
-        }
+      /* --- Global Reset & Base Styles --- */
+      body {
+          font-family: system-ui, -apple-system, sans-serif;
+          margin: 0;
+          background: #f4f4f9;
+          color: #333;
+          line-height: 1.5;
+      }
 
-        /* --- Common Components --- */
-        .card {
-            background: #fff;
-            padding: 20px;
-            border-radius: 8px;
-            box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
-            margin-bottom: 20px;
-        }
+      /* --- Common Components --- */
+      .card {
+          background: #fff;
+          padding: 20px;
+          border-radius: 8px;
+          box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
+          margin-bottom: 20px;
+      }
 
-        label {
-            font-weight: bold;
-            display: block;
-            margin-top: 10px;
-            font-size: 0.9rem;
-        }
+      label {
+          font-weight: bold;
+          display: block;
+          margin-top: 10px;
+          font-size: 0.9rem;
+      }
 
-        input[type="text"],
-        input[type="email"],
-        input[type="password"],
-        select,
-        textarea,
-        input[type="file"] {
-            width: 100%;
-            padding: 8px;
-            margin-top: 5px;
-            box-sizing: border-box;
-            border: 1px solid #ccc;
-            border-radius: 4px;
-            font-family: inherit;
-            /* Ensure consistent height calculation across browsers */
-            line-height: 1.5;
-            font-size: 1rem;
-        }
+      input[type="text"],
+      input[type="email"],
+      input[type="password"],
+      select,
+      textarea,
+      input[type="file"] {
+          width: 100%;
+          padding: 8px;
+          margin-top: 5px;
+          box-sizing: border-box;
+          border: 1px solid #ccc;
+          border-radius: 4px;
+          font-family: inherit;
+          /* Ensure consistent height calculation across browsers */
+          line-height: 1.5;
+          font-size: 1rem;
+      }
 
-        button { cursor: pointer; font-family: inherit; }
+      button { cursor: pointer; font-family: inherit; }
 
-        .alert {
-            padding: 10px;
-            border-radius: 4px;
-            margin-bottom: 15px;
-            font-size: 0.9rem;
-        }
-        .alert-success { background: #d4edda; color: #155724; }
-        .alert-danger { background: #f8d7da; color: #721c24; }
+      .alert {
+          padding: 10px;
+          border-radius: 4px;
+          margin-bottom: 15px;
+          font-size: 0.9rem;
+      }
+      .alert-success { background: #d4edda; color: #155724; }
+      .alert-danger { background: #f8d7da; color: #721c24; }
 
-        /* --- Password Toggle Utility --- */
-        .password-field { 
-            position: relative; 
-            /* Use flex to ensure proper alignment of children */
-            display: flex;
-            align-items: stretch;
-        }
-        .password-field input { 
-            padding-right: 44px; 
-            margin-top: 5px;
-            flex: 1;
-        }
-        .password-toggle {
-            position: absolute;
-            /* Center vertically within the field container */
-            top: 50%;
-            transform: translateY(-50%);
-            right: 0;
-            /* Match input height: (line-height * font-size) + (padding * 2) + (border * 2) */
-            height: calc(1.5em + 16px + 2px);
-            width: 40px;
-            margin: 0;
-            padding: 0;
-            background: transparent;
-            color: #475569;
-            border: 0;
-            border-radius: 0 4px 4px 0;
-            /* Align with input's top margin */
-            margin-top: 5px;
-        }
-        .password-toggle:hover { color: #0066cc; }
-        .password-toggle:focus {
-            outline: 2px solid #0066cc;
-            outline-offset: -2px;
-        }
-        .password-toggle svg { 
-            width: 20px; 
-            height: 20px; 
-            display: block; 
-            margin: auto; 
-        }
+      /* --- Password Toggle Utility --- */
+      .password-field {
+          position: relative; 
+          margin-top: 5px;
+      }
+      .password-field input {
+          width: 100%;
+          padding-right: 44px;
+          box-sizing: border-box;
+      }
+      .password-toggle {
+          position: absolute;
+          top: 50%;
+          transform: translateY(-50%);
+          right: 0;
+          height: 80%;
+          width: 40px;
+          margin: 3px;
+          padding: 0;
+          background: transparent;
+          color: #475569;
+          border: 0;
+          border-radius: 0 4px 4px 0;
+      }
+      .password-toggle:hover,
+      .password-toggle.is-active {
+          color: #0066cc;
+      }
+      .password-toggle:focus-visible {
+          outline: 2px solid #0066cc;
+      }
+      .password-toggle svg {
+          width: 20px; 
+          height: 20px; 
+          display: block; 
+          margin: auto; 
+      }
     </style>
     {% block extra_head %}{% endblock %}
   </head>
@@ -111,11 +107,12 @@
       <script>
       // Global utility for password visibility toggling
       function togglePasswordVisibility(toggleButton) {
-          const input = toggleButton.parentElement.querySelector("input");
-          if (!input) return;
-          const visible = input.type === "text";
-          input.type = visible ? "password" : "text";
-          toggleButton.setAttribute("aria-label", visible ? "Show password" : "Hide password");
+        const input = toggleButton.parentElement.querySelector("input");
+        if (!input) return;
+        const visible = input.type === "text";
+        input.type = visible ? "password" : "text";
+        toggleButton.setAttribute("aria-label", visible ? "Show password" : "Hide password");
+        toggleButton.classList.toggle("is-active", !visible);
       }
       </script>
     {% endblock %}
