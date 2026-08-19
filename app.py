@@ -498,7 +498,6 @@ def store_uploaded_image(db, file_field_name, blob_key, ext_key):
     """
     Shared logic for handling the favicon/org_logo upload fields in /save.
     Validates the image, then stores its bytes and resolved extension in site_config.
-    SVG uploads are disabled here; they must be managed via sync-icons.py.
     """
     if file_field_name not in request.files:
         return
@@ -510,26 +509,32 @@ def store_uploaded_image(db, file_field_name, blob_key, ext_key):
     if not raw_bytes:
         raise ValueError("Uploaded file is empty.")
 
-    # Sniff for SVG first: SVGs are plain text/XML. We reject them here because
-    # icon management is now handled exclusively by sync-icons.py.
+    # Check if it's an SVG
     head = raw_bytes[:512].lstrip().lower()
-    if head.startswith(b"<?xml") or b"<svg" in head:
-        raise ValueError(
-            "SVG uploads are disabled. Please use sync-icons.py to manage icons."
-        )
+    is_svg = head.startswith(b"<?xml") or b"<svg" in head
 
-    # Otherwise, treat it as a raster image and let Pillow verify the structure.
-    try:
-        with Image.open(io.BytesIO(raw_bytes)) as img:
-            img.verify()
-        with Image.open(io.BytesIO(raw_bytes)) as img:
-            fmt = img.format
-    except UnidentifiedImageError:
-        raise ValueError("File is not a recognized image format.")
+    if is_svg:
+        # For SVG, just validate it's well-formed XML and store it
+        try:
+            import xml.etree.ElementTree as ET
 
-    ext = RASTER_FORMAT_EXTENSIONS.get(fmt)
-    if not ext:
-        raise ValueError(f"Image format '{fmt}' is not supported.")
+            ET.fromstring(raw_bytes)
+        except ET.ParseError:
+            raise ValueError("File is not a valid SVG/XML file.")
+        ext = ".svg"
+    else:
+        # Otherwise, treat it as a raster image and let Pillow verify the structure.
+        try:
+            with Image.open(io.BytesIO(raw_bytes)) as img:
+                img.verify()
+            with Image.open(io.BytesIO(raw_bytes)) as img:
+                fmt = img.format
+        except UnidentifiedImageError:
+            raise ValueError("File is not a recognized image format.")
+
+        ext = RASTER_FORMAT_EXTENSIONS.get(fmt)
+        if not ext:
+            raise ValueError(f"Image format '{fmt}' is not supported.")
 
     db.execute(
         "INSERT OR REPLACE INTO site_config (key, value, blob_value) VALUES (?, 'present', ?)",
