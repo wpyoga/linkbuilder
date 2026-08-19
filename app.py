@@ -545,6 +545,23 @@ def store_uploaded_image(db, file_field_name, blob_key, ext_key):
     )
 
 
+def get_current_image_preview(db, blob_key, ext_key):
+    """Retrieve stored image bytes and extension for preview display."""
+    # Query both rows separately to ensure we get the right data
+    blob_row = db.execute(
+        "SELECT value, blob_value FROM site_config WHERE key = ?", (blob_key,)
+    ).fetchone()
+
+    ext_row = db.execute(
+        "SELECT value FROM site_config WHERE key = ?", (ext_key,)
+    ).fetchone()
+
+    if not blob_row or not blob_row["blob_value"]:
+        return None, None
+
+    return blob_row["blob_value"], ext_row["value"] if ext_row else None
+
+
 # -----------------------------------------------------------------------------
 # Routes
 # -----------------------------------------------------------------------------
@@ -606,6 +623,15 @@ def admin():
         config_rows = db.execute("SELECT key, value FROM site_config").fetchall()
         config = {r["key"]: r["value"] for r in config_rows}
         buttons = json.loads(config.get("buttons_json", "[]"))
+
+        # Get current favicon and logo for preview
+        favicon_data, favicon_ext = get_current_image_preview(
+            db, "favicon_blob", "favicon_ext"
+        )
+        logo_data, logo_ext = get_current_image_preview(
+            db, "org_logo_blob", "org_logo_ext"
+        )
+
         data = {
             "title": config.get("title", ""),
             "bio": config.get("bio", ""),
@@ -613,7 +639,30 @@ def admin():
             "background_light": config.get("background_light", DEFAULT_LIGHT_BG),
             "background_dark": config.get("background_dark", DEFAULT_DARK_BG),
             "buttons": buttons,
+            "has_favicon": favicon_data is not None,
+            "has_org_logo": logo_data is not None,
         }
+
+        # Convert binary data to base64 for inline preview
+        import base64
+
+        if favicon_data:
+            b64_favicon = base64.b64encode(favicon_data).decode("utf-8")
+            mime_type = (
+                "image/svg+xml"
+                if favicon_ext == ".svg"
+                else f"image/{favicon_ext.lstrip('.')}"
+            )
+            data["favicon_preview"] = f"data:{mime_type};base64,{b64_favicon}"
+
+        if logo_data:
+            b64_logo = base64.b64encode(logo_data).decode("utf-8")
+            mime_type = (
+                "image/svg+xml"
+                if logo_ext == ".svg"
+                else f"image/{logo_ext.lstrip('.')}"
+            )
+            data["logo_preview"] = f"data:{mime_type};base64,{b64_logo}"
 
     icon_catalog = get_icon_catalog_metadata()
     return render_template(
