@@ -2,670 +2,771 @@
 {% from "base.jinja2" import password_field, render_flashes %}
 {% block title %}Linkbuilder Admin{% endblock %}
 {% block extra_head %}
-    <style>
+  <style>
     /* Admin-specific styles */
     .admin-header {
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-        margin-bottom: 20px;
-        max-width: 700px;
-        margin: 20px auto;
-        padding: 0 15px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 20px;
+      max-width: 700px;
+      margin: 20px auto;
+      padding: 0 15px;
     }
+
     .admin-container {
-        max-width: 700px;
-        margin: 0 auto 20px auto;
-        padding: 0 15px;
+      max-width: 700px;
+      margin: 0 auto 20px auto;
+      padding: 0 15px;
     }
+
     .button-block {
-        background: #fff;
-        border: 1px solid #ddd;
-        border-radius: 6px;
-        margin-bottom: 12px;
-        box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+      background: #fff;
+      border: 1px solid #ddd;
+      border-radius: 6px;
+      margin-bottom: 12px;
+      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
     }
+
     summary {
-        padding: 12px 15px;
-        font-weight: bold;
-        cursor: pointer;
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-        background: #fdfdfd;
-        border-radius: 6px;
-        user-select: none;
+      padding: 12px 15px;
+      font-weight: bold;
+      cursor: pointer;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      background: #fdfdfd;
+      border-radius: 6px;
+      user-select: none;
     }
-    .block-content { padding: 15px; border-top: 1px solid #eee; }
+
+    .block-content {
+      padding: 15px;
+      border-top: 1px solid #eee;
+    }
+
     .nested-vcard-details {
-        margin-top: 12px;
-        border: 1px dashed #cbd5e1;
-        border-radius: 6px;
-        background: #f8fafc;
+      margin-top: 12px;
+      border: 1px dashed #cbd5e1;
+      border-radius: 6px;
+      background: #f8fafc;
     }
+
     .nested-vcard-details summary {
-        font-size: 0.85rem;
-        color: #475569;
-        background: #f1f5f9;
-        padding: 8px 12px;
+      font-size: 0.85rem;
+      color: #475569;
+      background: #f1f5f9;
+      padding: 8px 12px;
     }
+
     .color-picker-wrapper {
-        display: flex;
-        align-items: center;
-        gap: 10px;
-        margin-top: 8px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-top: 8px;
     }
+
     .color-picker-wrapper input[type="color"] {
-        border: none;
-        width: 32px;
-        height: 32px;
-        cursor: pointer;
-        background: transparent;
+      border: none;
+      width: 32px;
+      height: 32px;
+      cursor: pointer;
+      background: transparent;
     }
+
     .color-reset-btn {
-        background: #e2e8f0;
-        color: #334155;
-        border: none;
-        padding: 4px 8px;
-        border-radius: 4px;
-        cursor: pointer;
-        font-size: 0.8rem;
+      background: #e2e8f0;
+      color: #334155;
+      border: none;
+      padding: 4px 8px;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 0.8rem;
     }
-    .control-btns { display: flex; gap: 5px; }
+
+    .control-btns {
+      display: flex;
+      gap: 5px;
+    }
+
     .control-btns button {
-        background: #e2e8f0;
-        color: #334155;
-        border: none;
-        padding: 4px 8px;
-        border-radius: 4px;
-        font-size: 0.8rem;
+      background: #e2e8f0;
+      color: #334155;
+      border: none;
+      padding: 4px 8px;
+      border-radius: 4px;
+      font-size: 0.8rem;
     }
-    .control-btns button.btn-del { background: #fee2e2; color: #991b1b; }
-    .add-actions { display: flex; gap: 10px; margin-top: 15px; }
+
+    .control-btns button.btn-del {
+      background: #fee2e2;
+      color: #991b1b;
+    }
+
+    .add-actions {
+      display: flex;
+      gap: 10px;
+      margin-top: 15px;
+    }
+
     .btn-add {
-        background: #28a745;
-        color: #fff;
-        border: none;
-        padding: 10px 15px;
-        border-radius: 4px;
-        font-weight: 500;
+      background: #28a745;
+      color: #fff;
+      border: none;
+      padding: 10px 15px;
+      border-radius: 4px;
+      font-weight: 500;
     }
-    .btn-add-vcard { background: #0284c7; }
+
+    .btn-add-vcard {
+      background: #0284c7;
+    }
+
     .submit-btn {
-        background: #0066cc;
-        color: #fff;
-        border: none;
-        padding: 12px;
-        border-radius: 6px;
-        font-size: 1.1em;
-        width: 100%;
-        margin-top: 10px;
+      background: #0066cc;
+      color: #fff;
+      border: none;
+      padding: 12px;
+      border-radius: 6px;
+      font-size: 1.1em;
+      width: 100%;
+      margin-top: 10px;
     }
-    .field-error { border-color: #dc2626 !important; background: #fef2f2; }
-    .field-error-message { margin-top: 4px; color: #b91c1c; font-size: 0.85rem; font-weight: 500; }
+
+    .field-error {
+      border-color: #dc2626 !important;
+      background: #fef2f2;
+    }
+
+    .field-error-message {
+      margin-top: 4px;
+      color: #b91c1c;
+      font-size: 0.85rem;
+      font-weight: 500;
+    }
+
     .validation-summary {
-        padding: 10px;
-        border: 1px solid #fca5a5;
-        border-radius: 4px;
-        margin-bottom: 15px;
-        background: #fef2f2;
-        color: #991b1b;
-        font-weight: 600;
+      padding: 10px;
+      border: 1px solid #fca5a5;
+      border-radius: 4px;
+      margin-bottom: 15px;
+      background: #fef2f2;
+      color: #991b1b;
+      font-weight: 600;
     }
+
     .type-tag {
-        font-size: 0.75rem;
-        padding: 2px 6px;
-        border-radius: 4px;
-        text-transform: uppercase;
-        margin-left: 8px;
+      font-size: 0.75rem;
+      padding: 2px 6px;
+      border-radius: 4px;
+      text-transform: uppercase;
+      margin-left: 8px;
     }
-    .tag-link { background: #e0f2fe; color: #0369a1; }
-    .tag-vcard { background: #f0fdf4; color: #15803d; }
-    .slug-preview { display: block; margin-top: 4px; font-size: 0.85rem; color: #64748b; }
-    .slug-preview code { color: #0284c7; font-weight: bold; }
-    .icon-picker-control { display: flex; align-items: center; gap: 10px; margin-top: 8px; }
+
+    .tag-link {
+      background: #e0f2fe;
+      color: #0369a1;
+    }
+
+    .tag-vcard {
+      background: #f0fdf4;
+      color: #15803d;
+    }
+
+    .slug-preview {
+      display: block;
+      margin-top: 4px;
+      font-size: 0.85rem;
+      color: #64748b;
+    }
+
+    .slug-preview code {
+      color: #0284c7;
+      font-weight: bold;
+    }
+
+    .icon-picker-control {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-top: 8px;
+    }
+
     .icon-picker-button {
-        display: inline-flex;
-        align-items: center;
-        gap: 6px;
-        min-height: 32px;
-        padding: 4px 8px;
-        border: 1px solid #cbd5e1;
-        border-radius: 4px;
-        background: #f8fafc;
-        color: #334155;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      min-height: 32px;
+      padding: 4px 8px;
+      border: 1px solid #cbd5e1;
+      border-radius: 4px;
+      background: #f8fafc;
+      color: #334155;
     }
-    .icon-picker-button img { width: 20px; height: 20px; object-fit: contain; }
-    
+
+    .icon-picker-button img {
+      width: 20px;
+      height: 20px;
+      object-fit: contain;
+    }
+
     /* Modal Styles */
     .icon-picker-modal {
-        display: none;
-        position: fixed;
-        inset: 0;
-        z-index: 1000;
-        padding: 20px;
-        box-sizing: border-box;
-        align-items: center;
-        justify-content: center;
-        background: rgba(15, 23, 42, 0.55);
+      display: none;
+      position: fixed;
+      inset: 0;
+      z-index: 1000;
+      padding: 20px;
+      box-sizing: border-box;
+      align-items: center;
+      justify-content: center;
+      background: rgba(15, 23, 42, 0.55);
     }
-    .icon-picker-modal.open { display: flex; }
+
+    .icon-picker-modal.open {
+      display: flex;
+    }
+
     .icon-picker-dialog {
-        display: flex;
-        flex-direction: column;
-        width: min(620px, 100%);
-        max-height: min(720px, 90vh);
-        background: #fff;
-        border-radius: 8px;
-        overflow: hidden;
+      display: flex;
+      flex-direction: column;
+      width: min(620px, 100%);
+      max-height: min(720px, 90vh);
+      background: #fff;
+      border-radius: 8px;
+      overflow: hidden;
     }
+
     .icon-picker-header {
-        display: flex;
-        align-items: center;
-        gap: 10px;
-        padding: 15px;
-        border-bottom: 1px solid #e2e8f0;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding-left: 20px;
+      border-bottom: 1px solid #e2e8f0;
     }
-    .icon-picker-results {
-        display: grid;
-        grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
-        gap: 8px;
-        padding: 15px;
-        overflow-y: auto;
+
+    .icon-picker-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(100px, 1fr));
+      gap: 8px;
+      padding: 12px;
+      overflow-y: auto;
+      align-items: start;
+      flex: 1;
     }
-    .icon-result {
-        display: flex;
-        flex-direction: column;
-        align-items: center;
-        gap: 6px;
-        min-height: 80px;
-        padding: 8px;
-        border: 1px solid #e2e8f0;
-        border-radius: 6px;
-        background: #fff;
-        cursor: pointer;
+
+    .icon-card {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      height: 100%;
+      gap: 6px;
+      min-height: 100px;
+      padding: 12px 8px;
+      border: 1px solid #e2e8f0;
+      border-radius: 6px;
+      background: #fff;
+      cursor: pointer;
     }
-    .icon-result:hover { background: #f8fafc; }
-    .icon-result img { width: 24px; height: 24px; object-fit: contain; }
-    .icon-result span { font-size: 0.8rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
-    </style>
+
+    .icon-card:hover {
+      background: #f8fafc;
+    }
+
+    .icon-card img {
+      width: 48px;
+      height: 48px;
+      object-fit: contain;
+    }
+
+    .icon-card span {
+      font-size: 0.8rem;
+      max-width: 100%;
+      overflow-wrap: break-word;
+      word-break: break-word;
+    }
+  </style>
 {% endblock %}
 {% block content %}
-    <div class="admin-header">
-        <h2>Linkbuilder Admin</h2>
-        <span style="font-size: 0.9rem">
-            Logged in as <strong>{{ user.username }}</strong> |
-            <a href="/change-password" style="color: #475569; text-decoration: none">Change Password</a> |
-            <a href="/logout" style="color: #d9534f; text-decoration: none">Logout</a>
-        </span>
-    </div>
-    <div class="admin-container">
-        {{ render_flashes() }}
-        {% if validation_errors %}
-            <div class="validation-summary">Please correct the highlighted fields below.</div>
-        {% endif %}
-        <form action="/save"
-              method="POST"
-              enctype="multipart/form-data"
-              id="admin-form"
-              onsubmit="return serializeButtonsBeforeSubmit();">
-            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
-            <input type="hidden" name="buttons_json" id="buttons-json-field" value="" />
-            <div class="card">
-                <h3>General Info & Media</h3>
-                <label for="page-title">Page Title / Name</label>
-                <input id="page-title"
-                       type="text"
-                       name="site_title"
-                       value="{{ data.title }}"
-                       autocomplete="off"
-                       placeholder="e.g. Acme Corporation"
-                       required />
-                <label>Bio / Description</label>
-                <textarea name="bio"
-                          rows="3"
-                          placeholder="e.g. Software engineering and consulting services.">{{ data.bio }}</textarea>
-                <label>Page Theme</label>
-                <select name="theme">
-                    <option value="auto" {% if data.theme=='auto' %}selected{% endif %}>Auto (Match Visitor OS/Browser Dark Mode)</option>
-                    <option value="light" {% if data.theme=='light' %}selected{% endif %}>Light</option>
-                    <option value="dark" {% if data.theme=='dark' %}selected{% endif %}>Dark</option>
-                </select>
-                <div class="color-picker-wrapper">
-                    <label style="margin:0;">Light Background:</label>
-                    <input type="color"
-                           name="background_light"
-                           value="{{ data.background_light or '#f8fafc' }}"
-                           data-default="#f8fafc" />
-                    <button type="button" class="color-reset-btn" onclick="resetColor(this)">Default</button>
-                    <label style="margin:0;">Dark Background:</label>
-                    <input type="color"
-                           name="background_dark"
-                           value="{{ data.background_dark or '#0f172a' }}"
-                           data-default="#0f172a" />
-                    <button type="button" class="color-reset-btn" onclick="resetColor(this)">Default</button>
-                </div>
-                <label>Favicon Image (.ico, .png, .svg)</label>
-                <input type="file" name="favicon" accept="image/*,.ico" />
-                {% if data.has_favicon %}<small style="color: #16a34a;">Custom favicon currently stored in database</small>{% endif %}
-                <label>Organization Logo Header (.png, .jpg, .svg)</label>
-                <input type="file" name="org_logo" accept="image/*" />
-                {% if data.has_org_logo %}<small style="color: #16a34a;">Custom logo currently stored in database</small>{% endif %}
-            </div>
-            <div class="card">
-                <h3>Page Buttons (Arrange & Order)</h3>
-                <div id="buttons-container">
-                    {% for btn in data.buttons %}
-                        {% set btn_errors = validation_errors.get(loop.index0, {}) if validation_errors else {} %}
-                        <details class="button-block" data-btn-type="{{ btn.type }}" open>
-                            <summary>
-                                <div>
-                                    <span class="block-title">
-                                        {% if btn.type == 'link' %}
-                                            {{ btn.label or 'New Link' }}
-                                        {% else %}
-                                            {{ btn.button_label or 'New vCard' }}
-                                        {% endif %}
-                                    </span>
-                                    <span class="type-tag {% if btn.type == 'link' %}tag-link{% else %}tag-vcard{% endif %}">{{ btn.type }}</span>
-                                </div>
-                                <div class="control-btns" onclick="event.preventDefault();">
-                                    <button type="button" onclick="moveBlock(this, -1)">▲ Up</button>
-                                    <button type="button" onclick="moveBlock(this, 1)">▼ Down</button>
-                                    <button type="button" class="btn-del" onclick="deleteBlock(this)">Delete</button>
-                                </div>
-                            </summary>
-                            <div class="block-content">
-                                <div class="color-picker-wrapper">
-                                    <label style="margin:0;">Button Color:</label>
-                                    <input type="color"
-                                           data-field="color"
-                                           value="{{ btn.color or ('#28a745' if btn.type == 'link' else '#0284c7') }}" />
-                                    <button type="button" class="color-reset-btn" onclick="resetColor(this)">Default</button>
-                                    <label style="margin:0;">Button Text Color:</label>
-                                    <input type="color"
-                                           data-field="text_color"
-                                           value="{{ btn.text_color or '#ffffff' }}"
-                                           data-default="#ffffff" />
-                                    <button type="button" class="color-reset-btn" onclick="resetColor(this)">Default</button>
-                                </div>
-                                <div class="icon-picker-control">
-                                    <label style="margin:0;">Button Icon:</label>
-                                    <button type="button"
-                                            class="icon-picker-button"
-                                            onclick="openIconPicker(this)">
-                                        {% if btn.icon %}
-                                            <img src="{{ url_for('static', filename='icons/' + btn.icon + '.svg') }}"
-                                                 alt="" />
-                                        {% else %}
-                                            <img src="" alt="" style="display:none" />
-                                        {% endif %}
-                                        <span>{{ btn.icon|replace('-', ' ') |title if btn.icon else 'No icon' }}</span>
-                                    </button>
-                                    <input type="hidden" data-field="icon" value="{{ btn.icon or '' }}" />
-                                </div>
-                                {% if btn.type == 'link' %}
-                                    <label>Button Label</label>
-                                    <input type="text"
-                                           data-field="label"
-                                           value="{{ btn.label }}"
-                                           placeholder="e.g. Official Website"
-                                           oninput="updateSummaryTitle(this)"
-                                           required />
-                                    <label>Target URL</label>
-                                    <input type="text"
-                                           data-field="url"
-                                           value="{{ btn.url }}"
-                                           placeholder="e.g. https://example.com"
-                                           required />
-                                {% else %}
-                                    <label>Button Label on Public Page</label>
-                                    <input type="text"
-                                           data-field="button_label"
-                                           value="{{ btn.button_label }}"
-                                           placeholder="e.g. Save Contact Info"
-                                           oninput="updateSummaryTitle(this)"
-                                           required />
-                                    <label>vCard Filename Slug</label>
-                                    <input type="text"
-                                           data-field="slug"
-                                           value="{{ btn.slug }}"
-                                           placeholder="e.g. john_doe"
-                                           oninput="updateSlugPreview(this)"
-                                           required />
-                                    <small class="slug-preview">Generates <code>./{{ btn.slug or 'contact' }}.vcf</code></small>
-                                    <details class="nested-vcard-details" {% if btn_errors %}open{% endif %}>
-                                        <summary>Edit Contact Card Details (Name, Phone, Email)</summary>
-                                        <div style="padding: 10px 12px;">
-                                            <label>Full Name</label>
-                                            <input type="text"
-                                                   data-field="fn"
-                                                   value="{{ btn.fn }}"
-                                                   placeholder="e.g. John Doe" />
-                                            <label>Organization</label>
-                                            <input type="text"
-                                                   data-field="org"
-                                                   value="{{ btn.org }}"
-                                                   placeholder="e.g. Example Inc." />
-                                            <label>Job Title</label>
-                                            <input type="text"
-                                                   data-field="title"
-                                                   value="{{ btn.title }}"
-                                                   placeholder="e.g. Principal Engineer" />
-                                            <label>Email</label>
-                                            <input type="email"
-                                                   data-field="email"
-                                                   value="{{ btn.email }}"
-                                                   placeholder="e.g. john@example.com"
-                                                   class="{{ 'field-error' if btn_errors.get('email') }}"
-                                                   {% if btn_errors.get('email') %}aria-invalid="true"{% endif %} />
-                                            {% if btn_errors.get('email') %}<div class="field-error-message">{{ btn_errors.email }}</div>{% endif %}
-                                            <label>Phone Number</label>
-                                            <input type="text"
-                                                   data-field="phone"
-                                                   value="{{ btn.phone }}"
-                                                   placeholder="e.g. +1 555 019 2831"
-                                                   pattern="\+[0-9][0-9 -]*"
-                                                   title="Enter a phone number starting with + and containing only numbers, spaces, or hyphens."
-                                                   class="{{ 'field-error' if btn_errors.get('phone') }}"
-                                                   {% if btn_errors.get('phone') %}aria-invalid="true"{% endif %} />
-                                            {% if btn_errors.get('phone') %}<div class="field-error-message">{{ btn_errors.phone }}</div>{% endif %}
-                                            <label>Website URL</label>
-                                            <input type="text"
-                                                   data-field="url"
-                                                   value="{{ btn.url }}"
-                                                   placeholder="e.g. https://example.com"
-                                                   class="{{ 'field-error' if btn_errors.get('url') }}"
-                                                   {% if btn_errors.get('url') %}aria-invalid="true"{% endif %} />
-                                            {% if btn_errors.get('url') %}<div class="field-error-message">{{ btn_errors.url }}</div>{% endif %}
-                                        </div>
-                                    </details>
-                                {% endif %}
-                            </div>
-                        </details>
-                    {% endfor %}
-                </div>
-                <div class="add-actions">
-                    <button type="button" class="btn-add" onclick="addLinkBlock()">+ Add External Link</button>
-                    <button type="button" class="btn-add btn-add-vcard" onclick="addVCardBlock()">+ Add Contact (vCard)</button>
-                </div>
-            </div>
-            <button type="submit" class="submit-btn">Save & Bake Static Site</button>
-        </form>
-    </div>
-    <!-- Icon Picker Modal -->
-    <div id="icon-picker-modal"
-         class="icon-picker-modal"
-         onclick="handleIconPickerBackdrop(event)">
-        <div class="icon-picker-dialog"
-             role="dialog"
-             aria-modal="true"
-             aria-labelledby="icon-picker-title">
-            <div class="icon-picker-header">
-                <h3 id="icon-picker-title">Choose a brand icon</h3>
-                <input id="icon-picker-search"
-                       type="search"
-                       placeholder="Search brand icons..."
-                       autocomplete="off" />
-                <button type="button" class="color-reset-btn" onclick="closeIconPicker()">Close</button>
-            </div>
-            <div id="icon-picker-results" class="icon-picker-results"></div>
+  <div class="admin-header">
+    <h2>Linkbuilder Admin</h2>
+    <span style="font-size: 0.9rem">
+      Logged in as <strong>{{ user.username }}</strong> |
+      <a href="/change-password" style="color: #475569; text-decoration: none">Change Password</a> |
+      <a href="/logout" style="color: #d9534f; text-decoration: none">Logout</a>
+    </span>
+  </div>
+  <div class="admin-container">
+    {{ render_flashes() }}
+    {% if validation_errors %}
+      <div class="validation-summary">Please correct the highlighted fields below.</div>
+    {% endif %}
+    <form action="/save"
+          method="POST"
+          enctype="multipart/form-data"
+          id="admin-form"
+          onsubmit="return serializeButtonsBeforeSubmit();">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
+      <input type="hidden" name="buttons_json" id="buttons-json-field" value="" />
+      <div class="card">
+        <h3>General Info & Media</h3>
+        <label for="page-title">Page Title / Name</label>
+        <input id="page-title"
+               type="text"
+               name="site_title"
+               value="{{ data.title }}"
+               autocomplete="off"
+               placeholder="e.g. Acme Corporation"
+               required />
+        <label>Bio / Description</label>
+        <textarea name="bio"
+                  rows="3"
+                  placeholder="e.g. Software engineering and consulting services.">{{ data.bio }}</textarea>
+        <label>Page Theme</label>
+        <select name="theme">
+          <option value="auto" {% if data.theme=='auto' %}selected{% endif %}>Auto (Match Visitor OS/Browser Dark Mode)</option>
+          <option value="light" {% if data.theme=='light' %}selected{% endif %}>Light</option>
+          <option value="dark" {% if data.theme=='dark' %}selected{% endif %}>Dark</option>
+        </select>
+        <div class="color-picker-wrapper">
+          <label style="margin:0;">Light Background:</label>
+          <input type="color"
+                 name="background_light"
+                 value="{{ data.background_light or '#f8fafc' }}"
+                 data-default="#f8fafc" />
+          <button type="button" class="color-reset-btn" onclick="resetColor(this)">Default</button>
+          <label style="margin:0;">Dark Background:</label>
+          <input type="color"
+                 name="background_dark"
+                 value="{{ data.background_dark or '#0f172a' }}"
+                 data-default="#0f172a" />
+          <button type="button" class="color-reset-btn" onclick="resetColor(this)">Default</button>
         </div>
+        <label>Favicon Image (.ico, .png, .svg)</label>
+        <input type="file" name="favicon" accept="image/*,.ico" />
+        {% if data.has_favicon %}<small style="color: #16a34a;">Custom favicon currently stored in database</small>{% endif %}
+        <label>Organization Logo Header (.png, .jpg, .svg)</label>
+        <input type="file" name="org_logo" accept="image/*" />
+        {% if data.has_org_logo %}<small style="color: #16a34a;">Custom logo currently stored in database</small>{% endif %}
+      </div>
+      <div class="card">
+        <h3>Page Buttons (Arrange & Order)</h3>
+        <div id="buttons-container">
+          {% for btn in data.buttons %}
+            {% set btn_errors = validation_errors.get(loop.index0, {}) if validation_errors else {} %}
+            <details class="button-block" data-btn-type="{{ btn.type }}" open>
+              <summary>
+                <div>
+                  <span class="block-title">
+                    {% if btn.type == 'link' %}
+                      {{ btn.label or 'New Link' }}
+                    {% else %}
+                      {{ btn.button_label or 'New vCard' }}
+                    {% endif %}
+                  </span>
+                  <span class="type-tag {% if btn.type == 'link' %}tag-link{% else %}tag-vcard{% endif %}">{{ btn.type }}</span>
+                </div>
+                <div class="control-btns" onclick="event.preventDefault();">
+                  <button type="button" onclick="moveBlock(this, -1)">▲ Up</button>
+                  <button type="button" onclick="moveBlock(this, 1)">▼ Down</button>
+                  <button type="button" class="btn-del" onclick="deleteBlock(this)">Delete</button>
+                </div>
+              </summary>
+              <div class="block-content">
+                <div class="color-picker-wrapper">
+                  <label style="margin:0;">Button Color:</label>
+                  <input type="color"
+                         data-field="color"
+                         value="{{ btn.color or ('#28a745' if btn.type == 'link' else '#0284c7') }}" />
+                  <button type="button" class="color-reset-btn" onclick="resetColor(this)">Default</button>
+                  <label style="margin:0;">Button Text Color:</label>
+                  <input type="color"
+                         data-field="text_color"
+                         value="{{ btn.text_color or '#ffffff' }}"
+                         data-default="#ffffff" />
+                  <button type="button" class="color-reset-btn" onclick="resetColor(this)">Default</button>
+                </div>
+                <div class="icon-picker-control">
+                  <label style="margin:0;">Button Icon:</label>
+                  <button type="button"
+                          class="icon-picker-button"
+                          onclick="openIconPicker(this)">
+                    {% if btn.icon %}
+                      <img src="{{ url_for('static', filename='icons/' + btn.icon + '.svg') }}"
+                           alt="" />
+                    {% else %}
+                      <img src="" alt="" style="display:none" />
+                    {% endif %}
+                    <span>{{ btn.icon|replace('-', ' ') |title if btn.icon else 'No icon' }}</span>
+                  </button>
+                  <input type="hidden" data-field="icon" value="{{ btn.icon or '' }}" />
+                </div>
+                {% if btn.type == 'link' %}
+                  <label>Button Label</label>
+                  <input type="text"
+                         data-field="label"
+                         value="{{ btn.label }}"
+                         placeholder="e.g. Official Website"
+                         oninput="updateSummaryTitle(this)"
+                         required />
+                  <label>Target URL</label>
+                  <input type="text"
+                         data-field="url"
+                         value="{{ btn.url }}"
+                         placeholder="e.g. https://example.com"
+                         required />
+                {% else %}
+                  <label>Button Label on Public Page</label>
+                  <input type="text"
+                         data-field="button_label"
+                         value="{{ btn.button_label }}"
+                         placeholder="e.g. Save Contact Info"
+                         oninput="updateSummaryTitle(this)"
+                         required />
+                  <label>vCard Filename Slug</label>
+                  <input type="text"
+                         data-field="slug"
+                         value="{{ btn.slug }}"
+                         placeholder="e.g. john_doe"
+                         oninput="updateSlugPreview(this)"
+                         required />
+                  <small class="slug-preview">Generates <code>./{{ btn.slug or 'contact' }}.vcf</code></small>
+                  <details class="nested-vcard-details" {% if btn_errors %}open{% endif %}>
+                    <summary>Edit Contact Card Details (Name, Phone, Email)</summary>
+                    <div style="padding: 10px 12px;">
+                      <label>Full Name</label>
+                      <input type="text"
+                             data-field="fn"
+                             value="{{ btn.fn }}"
+                             placeholder="e.g. John Doe" />
+                      <label>Organization</label>
+                      <input type="text"
+                             data-field="org"
+                             value="{{ btn.org }}"
+                             placeholder="e.g. Example Inc." />
+                      <label>Job Title</label>
+                      <input type="text"
+                             data-field="title"
+                             value="{{ btn.title }}"
+                             placeholder="e.g. Principal Engineer" />
+                      <label>Email</label>
+                      <input type="email"
+                             data-field="email"
+                             value="{{ btn.email }}"
+                             placeholder="e.g. john@example.com"
+                             class="{{ 'field-error' if btn_errors.get('email') }}"
+                             {% if btn_errors.get('email') %}aria-invalid="true"{% endif %} />
+                      {% if btn_errors.get('email') %}<div class="field-error-message">{{ btn_errors.email }}</div>{% endif %}
+                      <label>Phone Number</label>
+                      <input type="text"
+                             data-field="phone"
+                             value="{{ btn.phone }}"
+                             placeholder="e.g. +1 555 019 2831"
+                             pattern="\+[0-9][0-9 -]*"
+                             title="Enter a phone number starting with + and containing only numbers, spaces, or hyphens."
+                             class="{{ 'field-error' if btn_errors.get('phone') }}"
+                             {% if btn_errors.get('phone') %}aria-invalid="true"{% endif %} />
+                      {% if btn_errors.get('phone') %}<div class="field-error-message">{{ btn_errors.phone }}</div>{% endif %}
+                      <label>Website URL</label>
+                      <input type="text"
+                             data-field="url"
+                             value="{{ btn.url }}"
+                             placeholder="e.g. https://example.com"
+                             class="{{ 'field-error' if btn_errors.get('url') }}"
+                             {% if btn_errors.get('url') %}aria-invalid="true"{% endif %} />
+                      {% if btn_errors.get('url') %}<div class="field-error-message">{{ btn_errors.url }}</div>{% endif %}
+                    </div>
+                  </details>
+                {% endif %}
+              </div>
+            </details>
+          {% endfor %}
+        </div>
+        <div class="add-actions">
+          <button type="button" class="btn-add" onclick="addLinkBlock()">+ Add External Link</button>
+          <button type="button" class="btn-add btn-add-vcard" onclick="addVCardBlock()">+ Add Contact (vCard)</button>
+        </div>
+      </div>
+      <button type="submit" class="submit-btn">Save & Bake Static Site</button>
+    </form>
+  </div>
+  <!-- Icon Picker Modal -->
+  <div id="icon-picker-modal"
+       class="icon-picker-modal"
+       onclick="handleIconPickerBackdrop(event)">
+    <div class="icon-picker-dialog"
+         role="dialog"
+         aria-modal="true"
+         aria-labelledby="icon-picker-title">
+      <div class="icon-picker-header">
+        <h3 id="icon-picker-title">Choose a brand icon</h3>
+        <input id="icon-picker-search"
+               type="search"
+               placeholder="Search brand icons..."
+               autocomplete="off" />
+        <button type="button" class="color-reset-btn" onclick="closeIconPicker()">Close</button>
+      </div>
+      <div id="icon-picker-grid" class="icon-picker-grid"></div>
     </div>
+  </div>
 {% endblock %}
 {% block scripts %}
-    <script>
+  <script>
     const iconCatalog = {{ icon_catalog|default([])|tojson }};
     let activeIconPickerButton = null;
 
     function iconAssetUrl(iconId) {
-        return "{{ url_for('static', filename='icons/') }}" + encodeURIComponent(iconId) + ".svg";
+      return "{{ url_for('static', filename='icons/') }}" + encodeURIComponent(iconId) + ".svg";
     }
 
     function openIconPicker(button) {
-        activeIconPickerButton = button;
-        const modal = document.getElementById("icon-picker-modal");
-        const search = document.getElementById("icon-picker-search");
-        modal.classList.add("open");
-        search.value = "";
-        renderIconPickerResults("");
-        search.focus();
+      activeIconPickerButton = button;
+      const modal = document.getElementById("icon-picker-modal");
+      const search = document.getElementById("icon-picker-search");
+      modal.classList.add("open");
+      search.value = "";
+      renderIconPickerGrid("");
+      search.focus();
     }
 
     function closeIconPicker() {
-        document.getElementById("icon-picker-modal").classList.remove("open");
-        activeIconPickerButton = null;
+      document.getElementById("icon-picker-modal").classList.remove("open");
+      activeIconPickerButton = null;
     }
 
     function handleIconPickerBackdrop(event) {
-        if (event.target === event.currentTarget) closeIconPicker();
+      if (event.target === event.currentTarget) closeIconPicker();
     }
 
-    function renderIconPickerResults(query) {
-        const results = document.getElementById("icon-picker-results");
-        const normalized = query.trim().toLowerCase();
-        const matches = iconCatalog
-            .filter(icon => !normalized || icon.name.toLowerCase().includes(normalized) || icon.id.includes(normalized))
-            .slice(0, 60);
+    function renderIconPickerGrid(query) {
+      const grid = document.getElementById("icon-picker-grid");
+      const normalized = query.trim().toLowerCase();
+      const matches = iconCatalog
+        .filter(icon => !normalized || icon.name.toLowerCase().includes(normalized) || icon.id.includes(normalized))
+        .slice(0, 60);
 
-        results.replaceChildren();
+      grid.replaceChildren();
 
-        const none = document.createElement("button");
-        none.type = "button";
-        none.className = "icon-result";
-        none.textContent = "No icon";
-        none.onclick = () => selectIcon("");
-        results.appendChild(none);
+      const none = document.createElement("button");
+      none.type = "button";
+      none.className = "icon-card";
+      none.textContent = "No icon";
+      none.onclick = () => selectIcon("");
+      grid.appendChild(none);
 
-        if (!matches.length) {
-            const empty = document.createElement("div");
-            empty.style.gridColumn = "1 / -1";
-            empty.style.padding = "20px";
-            empty.style.color = "#64748b";
-            empty.style.textAlign = "center";
-            empty.textContent = "No matching brand icons.";
-            results.appendChild(empty);
-            return;
-        }
+      if (!matches.length) {
+        const empty = document.createElement("div");
+        empty.style.gridColumn = "1 / -1";
+        empty.style.padding = "20px";
+        empty.style.color = "#64748b";
+        empty.style.textAlign = "center";
+        empty.textContent = "No matching brand icons.";
+        grid.appendChild(empty);
+        return;
+      }
 
-        matches.forEach(icon => {
-            const item = document.createElement("button");
-            item.type = "button";
-            item.className = "icon-result";
-            item.title = icon.name;
-            item.onclick = () => selectIcon(icon.id);
+      matches.forEach(icon => {
+        const item = document.createElement("button");
+        item.type = "button";
+        item.className = "icon-card";
+        item.title = icon.name;
+        item.onclick = () => selectIcon(icon.id);
 
-            const image = document.createElement("img");
-            image.src = iconAssetUrl(icon.id);
-            image.alt = "";
-            image.loading = "lazy";
-            item.appendChild(image);
+        const image = document.createElement("img");
+        image.src = iconAssetUrl(icon.id);
+        image.alt = "";
+        image.loading = "lazy";
+        item.appendChild(image);
 
-            const label = document.createElement("span");
-            label.textContent = icon.name;
-            item.appendChild(label);
-            results.appendChild(item);
-        });
+        const label = document.createElement("span");
+        label.textContent = icon.name;
+        item.appendChild(label);
+        grid.appendChild(item);
+      });
     }
 
     function selectIcon(iconId) {
-        if (!activeIconPickerButton) return;
-        const block = activeIconPickerButton.closest(".button-block");
-        const field = block.querySelector('[data-field="icon"]');
-        const image = activeIconPickerButton.querySelector("img");
-        const label = activeIconPickerButton.querySelector("span");
+      if (!activeIconPickerButton) return;
+      const block = activeIconPickerButton.closest(".button-block");
+      const field = block.querySelector('[data-field="icon"]');
+      const image = activeIconPickerButton.querySelector("img");
+      const label = activeIconPickerButton.querySelector("span");
 
-        field.value = iconId;
-        if (iconId) {
-            image.src = iconAssetUrl(iconId);
-            image.style.display = "";
-            const match = iconCatalog.find(icon => icon.id === iconId);
-            label.textContent = match ? match.name : iconId;
-        } else {
-            image.removeAttribute("src");
-            image.style.display = "none";
-            label.textContent = "No icon";
-        }
-        closeIconPicker();
+      field.value = iconId;
+      if (iconId) {
+        image.src = iconAssetUrl(iconId);
+        image.style.display = "";
+        const match = iconCatalog.find(icon => icon.id === iconId);
+        label.textContent = match ? match.name : iconId;
+      } else {
+        image.removeAttribute("src");
+        image.style.display = "none";
+        label.textContent = "No icon";
+      }
+      closeIconPicker();
     }
 
-    document.getElementById("icon-picker-search").addEventListener("input", event => renderIconPickerResults(event.target.value));
-    document.addEventListener("keydown", event => { if (event.key === "Escape") closeIconPicker(); });
+    document.getElementById("icon-picker-search").addEventListener("input", event => renderIconPickerGrid(event.target.value));
+    document.addEventListener("keydown", event => {
+      if (event.key === "Escape") closeIconPicker();
+    });
 
     function collectButtonsAsJson() {
-        const blocks = document.querySelectorAll("#buttons-container .button-block");
-        const buttons = [];
-        blocks.forEach((block) => {
-            const type = block.dataset.btnType;
-            const fields = {};
-            block.querySelectorAll("[data-field]").forEach((input) => {
-                fields[input.dataset.field] = input.value;
-            });
-            buttons.push(Object.assign({ type }, fields));
+      const blocks = document.querySelectorAll("#buttons-container .button-block");
+      const buttons = [];
+      blocks.forEach((block) => {
+        const type = block.dataset.btnType;
+        const fields = {};
+        block.querySelectorAll("[data-field]").forEach((input) => {
+          fields[input.dataset.field] = input.value;
         });
-        return JSON.stringify(buttons);
+        buttons.push(Object.assign({
+          type
+        }, fields));
+      });
+      return JSON.stringify(buttons);
     }
 
     function serializeButtonsBeforeSubmit() {
-        document.getElementById("buttons-json-field").value = collectButtonsAsJson();
-        return true;
+      document.getElementById("buttons-json-field").value = collectButtonsAsJson();
+      return true;
     }
 
     function resetColor(button) {
-        const colorInput = button.previousElementSibling;
-        colorInput.value = colorInput.dataset.default;
+      const colorInput = button.previousElementSibling;
+      colorInput.value = colorInput.dataset.default;
     }
 
     function updateSummaryTitle(inputEl) {
-        const block = inputEl.closest('.button-block');
-        const titleSpan = block.querySelector('.block-title');
-        titleSpan.textContent = inputEl.value.trim() || 'Untitled Button';
+      const block = inputEl.closest('.button-block');
+      const titleSpan = block.querySelector('.block-title');
+      titleSpan.textContent = inputEl.value.trim() || 'Untitled Button';
     }
 
     function sanitizeSlugJs(text) {
-        return text.trim().toLowerCase().replace(/[^a-z0-9_\-]/g, '_') || 'contact';
+      return text.trim().toLowerCase().replace(/[^a-z0-9_\-]/g, '_') || 'contact';
     }
 
     function updateSlugPreview(inputEl) {
-        const block = inputEl.closest('.button-block');
-        const previewCode = block.querySelector('.slug-preview code');
-        const cleanSlug = sanitizeSlugJs(inputEl.value);
-        previewCode.textContent = `./${cleanSlug}.vcf`;
+      const block = inputEl.closest('.button-block');
+      const previewCode = block.querySelector('.slug-preview code');
+      const cleanSlug = sanitizeSlugJs(inputEl.value);
+      previewCode.textContent = `./${cleanSlug}.vcf`;
     }
 
     function moveBlock(btn, direction) {
-        const block = btn.closest('.button-block');
-        if (direction === -1 && block.previousElementSibling) {
-            block.parentNode.insertBefore(block, block.previousElementSibling);
-        } else if (direction === 1 && block.nextElementSibling) {
-            block.parentNode.insertBefore(block.nextElementSibling, block);
-        }
+      const block = btn.closest('.button-block');
+      if (direction === -1 && block.previousElementSibling) {
+        block.parentNode.insertBefore(block, block.previousElementSibling);
+      } else if (direction === 1 && block.nextElementSibling) {
+        block.parentNode.insertBefore(block.nextElementSibling, block);
+      }
     }
 
     function deleteBlock(btn) {
-        if (confirm("Delete this button block?")) {
-            btn.closest('.button-block').remove();
-        }
+      if (confirm("Delete this button block?")) {
+        btn.closest('.button-block').remove();
+      }
     }
 
     function addLinkBlock() {
-        const container = document.getElementById("buttons-container");
-        const block = document.createElement("details");
-        block.className = "button-block";
-        block.dataset.btnType = "link";
-        block.open = true;
-        block.innerHTML = `
+      const container = document.getElementById("buttons-container");
+      const block = document.createElement("details");
+      block.className = "button-block";
+      block.dataset.btnType = "link";
+      block.open = true;
+      block.innerHTML = `
             <summary>
-                <div>
-                    <span class="block-title">New External Link</span>
-                    <span class="type-tag tag-link">link</span>
-                </div>
-                <div class="control-btns" onclick="event.preventDefault();">
-                    <button type="button" onclick="moveBlock(this, -1)">▲ Up</button>
-                    <button type="button" onclick="moveBlock(this, 1)">▼ Down</button>
-                    <button type="button" class="btn-del" onclick="deleteBlock(this)">Delete</button>
-                </div>
+              <div>
+                <span class="block-title">New External Link</span>
+                <span class="type-tag tag-link">link</span>
+              </div>
+              <div class="control-btns" onclick="event.preventDefault();">
+                <button type="button" onclick="moveBlock(this, -1)">▲ Up</button>
+                <button type="button" onclick="moveBlock(this, 1)">▼ Down</button>
+                <button type="button" class="btn-del" onclick="deleteBlock(this)">Delete</button>
+              </div>
             </summary>
             <div class="block-content">
-                <div class="color-picker-wrapper">
-                    <label style="margin:0;">Button Color:</label>
-                    <input type="color" data-field="color" value="#28a745" data-default="#28a745">
-                    <button type="button" class="color-reset-btn" onclick="resetColor(this)">Default</button>
-                    <label style="margin:0;">Button Text Color:</label>
-                    <input type="color" data-field="text_color" value="#ffffff" data-default="#ffffff">
-                    <button type="button" class="color-reset-btn" onclick="resetColor(this)">Default</button>
-                </div>
-                <div class="icon-picker-control">
-                    <label style="margin:0;">Button Icon:</label>
-                    <button type="button" class="icon-picker-button" onclick="openIconPicker(this)"><img alt="" style="display:none" /><span>No icon</span></button>
-                    <input type="hidden" data-field="icon" value="">
-                </div>
-                <label>Button Label</label>
-                <input type="text" data-field="label" placeholder="e.g. Official Website" oninput="updateSummaryTitle(this)" required>
-                <label>Target URL</label>
-                <input type="text" data-field="url" placeholder="e.g. https://example.com" required>
+              <div class="color-picker-wrapper">
+                <label style="margin:0;">Button Color:</label>
+                <input type="color" data-field="color" value="#28a745" data-default="#28a745">
+                <button type="button" class="color-reset-btn" onclick="resetColor(this)">Default</button>
+                <label style="margin:0;">Button Text Color:</label>
+                <input type="color" data-field="text_color" value="#ffffff" data-default="#ffffff">
+                <button type="button" class="color-reset-btn" onclick="resetColor(this)">Default</button>
+              </div>
+              <div class="icon-picker-control">
+                <label style="margin:0;">Button Icon:</label>
+                <button type="button" class="icon-picker-button" onclick="openIconPicker(this)"><img alt="" style="display:none" /><span>No icon</span></button>
+                <input type="hidden" data-field="icon" value="">
+              </div>
+              <label>Button Label</label>
+              <input type="text" data-field="label" placeholder="e.g. Official Website" oninput="updateSummaryTitle(this)" required>
+              <label>Target URL</label>
+              <input type="text" data-field="url" placeholder="e.g. https://example.com" required>
             </div>
         `;
-        container.appendChild(block);
+      container.appendChild(block);
     }
 
     function addVCardBlock() {
-        const container = document.getElementById("buttons-container");
-        const block = document.createElement("details");
-        block.className = "button-block";
-        block.dataset.btnType = "vcard";
-        block.open = true;
-        block.innerHTML = `
+      const container = document.getElementById("buttons-container");
+      const block = document.createElement("details");
+      block.className = "button-block";
+      block.dataset.btnType = "vcard";
+      block.open = true;
+      block.innerHTML = `
             <summary>
-                <div>
-                    <span class="block-title">New Contact (vCard)</span>
-                    <span class="type-tag tag-vcard">vcard</span>
-                </div>
-                <div class="control-btns" onclick="event.preventDefault();">
-                    <button type="button" onclick="moveBlock(this, -1)">▲ Up</button>
-                    <button type="button" onclick="moveBlock(this, 1)">▼ Down</button>
-                    <button type="button" class="btn-del" onclick="deleteBlock(this)">Delete</button>
-                </div>
+              <div>
+                <span class="block-title">New Contact (vCard)</span>
+                <span class="type-tag tag-vcard">vcard</span>
+              </div>
+              <div class="control-btns" onclick="event.preventDefault();">
+                <button type="button" onclick="moveBlock(this, -1)">▲ Up</button>
+                <button type="button" onclick="moveBlock(this, 1)">▼ Down</button>
+                <button type="button" class="btn-del" onclick="deleteBlock(this)">Delete</button>
+              </div>
             </summary>
             <div class="block-content">
-                <div class="color-picker-wrapper">
-                    <label style="margin:0;">Button Color:</label>
-                    <input type="color" data-field="color" value="#0284c7" data-default="#0284c7">
-                    <button type="button" class="color-reset-btn" onclick="resetColor(this)">Default</button>
-                    <label style="margin:0;">Button Text Color:</label>
-                    <input type="color" data-field="text_color" value="#ffffff" data-default="#ffffff">
-                    <button type="button" class="color-reset-btn" onclick="resetColor(this)">Default</button>
+              <div class="color-picker-wrapper">
+                <label style="margin:0;">Button Color:</label>
+                <input type="color" data-field="color" value="#0284c7" data-default="#0284c7">
+                <button type="button" class="color-reset-btn" onclick="resetColor(this)">Default</button>
+                <label style="margin:0;">Button Text Color:</label>
+                <input type="color" data-field="text_color" value="#ffffff" data-default="#ffffff">
+                <button type="button" class="color-reset-btn" onclick="resetColor(this)">Default</button>
+              </div>
+              <div class="icon-picker-control">
+                <label style="margin:0;">Button Icon:</label>
+                <button type="button" class="icon-picker-button" onclick="openIconPicker(this)"><img alt="" style="display:none" /><span>No icon</span></button>
+                <input type="hidden" data-field="icon" value="">
+              </div>
+              <label>Button Label on Public Page</label>
+              <input type="text" data-field="button_label" placeholder="e.g. Save Contact Info" oninput="updateSummaryTitle(this)" required>
+              <label>vCard Filename Slug</label>
+              <input type="text" data-field="slug" placeholder="e.g. john_doe" oninput="updateSlugPreview(this)" required>
+              <small class="slug-preview">Generates <code>./contact.vcf</code></small>
+              <details class="nested-vcard-details" open>
+                <summary>Edit Contact Card Details (Name, Phone, Email)</summary>
+                <div style="padding: 10px 12px;">
+                  <label>Full Name</label>
+                  <input type="text" data-field="fn" placeholder="e.g. John Doe">
+                  <label>Organization</label>
+                  <input type="text" data-field="org" placeholder="e.g. Example Inc.">
+                  <label>Job Title</label>
+                  <input type="text" data-field="title" placeholder="e.g. Principal Engineer">
+                  <label>Email</label>
+                  <input type="email" data-field="email" placeholder="e.g. john@example.com">
+                  <label>Phone Number</label>
+                  <input type="text" data-field="phone" placeholder="e.g. +1 555 019 2831">
+                  <label>Website URL</label>
+                  <input type="text" data-field="url" placeholder="e.g. https://example.com">
                 </div>
-                <div class="icon-picker-control">
-                    <label style="margin:0;">Button Icon:</label>
-                    <button type="button" class="icon-picker-button" onclick="openIconPicker(this)"><img alt="" style="display:none" /><span>No icon</span></button>
-                    <input type="hidden" data-field="icon" value="">
-                </div>
-                <label>Button Label on Public Page</label>
-                <input type="text" data-field="button_label" placeholder="e.g. Save Contact Info" oninput="updateSummaryTitle(this)" required>
-                <label>vCard Filename Slug</label>
-                <input type="text" data-field="slug" placeholder="e.g. john_doe" oninput="updateSlugPreview(this)" required>
-                <small class="slug-preview">Generates <code>./contact.vcf</code></small>
-                <details class="nested-vcard-details" open>
-                    <summary>Edit Contact Card Details (Name, Phone, Email)</summary>
-                    <div style="padding: 10px 12px;">
-                        <label>Full Name</label>
-                        <input type="text" data-field="fn" placeholder="e.g. John Doe">
-                        <label>Organization</label>
-                        <input type="text" data-field="org" placeholder="e.g. Example Inc.">
-                        <label>Job Title</label>
-                        <input type="text" data-field="title" placeholder="e.g. Principal Engineer">
-                        <label>Email</label>
-                        <input type="email" data-field="email" placeholder="e.g. john@example.com">
-                        <label>Phone Number</label>
-                        <input type="text" data-field="phone" placeholder="e.g. +1 555 019 2831">
-                        <label>Website URL</label>
-                        <input type="text" data-field="url" placeholder="e.g. https://example.com">
-                    </div>
-                </details>
+              </details>
             </div>
         `;
-        container.appendChild(block);
+      container.appendChild(block);
     }
-    </script>
+  </script>
 {% endblock %}
