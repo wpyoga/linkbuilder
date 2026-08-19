@@ -1,6 +1,7 @@
 venv
 pub
-static
+static/*
+!static/linkbuilder.svg
 *.svg
 __pycache__
 **/*.orig

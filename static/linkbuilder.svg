@@ -1,0 +1,37 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="100%" height="100%">
+  <style>
+    :root {
+      --bg-color: #0F172A; /* Dark slate background */
+      --accent-1: #2563EB; /* Deep blue */
+      --accent-2: #38BDF8; /* Sky blue connection */
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg-color: #FFFFFF; /* Light background for contrast if user prefers */
+      }
+    }
+  </style>
+  
+  <!-- Base Container -->
+  <rect width="32" height="32" rx="7" fill="var(--bg-color)" />
+
+  <!-- Link / Node Structure -->
+  <g transform="translate(2, 2)">
+    <!-- Left vertical 'L' stem / First Node -->
+    <path d="M 7 7 L 7 21 C 7 23 9 25 11 25 L 21 25" 
+          fill="none" 
+          stroke="var(--accent-1)" 
+          stroke-width="4" 
+          stroke-linecap="round" 
+          stroke-linejoin="round"/>
+          
+    <!-- Interlocking Connection / Second Link -->
+    <path d="M 13 11 L 21 11 C 23 11 25 13 25 15 L 25 19 C 25 21 23 23 21 23" 
+          fill="none" 
+          stroke="var(--accent-2)" 
+          stroke-width="4" 
+          stroke-linecap="round" 
+          stroke-linejoin="round"/>
+  </g>
+</svg>
+
