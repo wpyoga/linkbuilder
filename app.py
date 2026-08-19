@@ -20,6 +20,7 @@ from email_validator import EmailNotValidError, validate_email
 import phonenumbers
 from phonenumbers.phonenumberutil import NumberParseException
 from urllib.parse import urlparse
+from pathlib import Path
 from PIL import Image, UnidentifiedImageError
 from slugify import slugify
 from contextlib import contextmanager
@@ -30,12 +31,10 @@ from config import (
     ALLOWED_THEMES,
     DEFAULT_LIGHT_BG,
     DEFAULT_DARK_BG,
-    ICON_NAME_RE,
     ICON_DIR,
     OUTPUT_DIR,
     HEX_COLOR_RE,
     RASTER_FORMAT_EXTENSIONS,
-    DEPLOYMENT_SUPERADMIN_USER,
 )
 
 # -----------------------------------------------------------------------------
@@ -319,18 +318,10 @@ def validate_buttons_payload(raw_json: str):
     if not isinstance(parsed, list):
         return None, "Buttons payload must be a JSON array."
 
-    # Load catalog from DB for validation
-    valid_icons = set()
-    with get_db() as db:
-        row = db.execute(
-            "SELECT value FROM site_config WHERE key = 'icon_catalog_json'"
-        ).fetchone()
-        if row and row["value"]:
-            try:
-                valid_icons = set(json.loads(row["value"]))
-            except:
-                pass
-
+    valid_icons = set(
+        os.path.splitext(os.path.basename(p))[0]
+        for p in Path(ICON_DIR).glob("*.svg", case_sensitive=False)
+    )
     validated = []
     seen_slugs = set()
     field_errors = {}
@@ -495,17 +486,10 @@ def bake_static_site():
 
 def get_icon_catalog_metadata():
     """Load the pre-compiled custom catalog from the database and format for UI."""
-    with get_db() as db:
-        row = db.execute(
-            "SELECT value FROM site_config WHERE key = 'icon_catalog_json'"
-        ).fetchone()
-        if row and row["value"]:
-            try:
-                ids = json.loads(row["value"])
-                # Reconstruct display names for the admin UI
-                return [{"id": i, "name": i.replace("-", " ").title()} for i in ids]
-            except:
-                pass
+    icon_files = list(Path(ICON_DIR).glob("*.svg", case_sensitive=False))
+    if icon_files:
+        icon_ids = sorted(os.path.splitext(os.path.basename(f))[0] for f in icon_files)
+        return [{"id": i, "name": i.replace("-", " ").title()} for i in icon_ids]
     return []
 
 

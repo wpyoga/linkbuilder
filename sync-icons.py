@@ -8,10 +8,8 @@ import urllib.request
 from xml.etree import ElementTree as ET
 from defusedxml import ElementTree as DefusedET
 from svgelements import SVG
-import sqlite3
-from contextlib import contextmanager
 
-from config import ICON_SRC_URL, ICON_DIR, DB_PATH
+from config import ICON_SRC_URL, ICON_DIR
 
 # SVG elements that are never allowed to survive sanitization, regardless of namespace.
 # <script> is the direct code-execution vector; <foreignObject> can embed arbitrary
@@ -22,24 +20,6 @@ SVG_DISALLOWED_TAGS = {"script", "foreignObject", "iframe"}
 # plus href/xlink:href, which can be used to reference and load external/remote content.
 SVG_DISALLOWED_ATTR_PREFIXES = ("on",)
 SVG_DISALLOWED_ATTRS = {"href", "xlink:href"}
-
-
-@contextmanager
-def get_db():
-    """Context manager for database access during sync."""
-    conn = sqlite3.connect(DB_PATH)
-    conn.execute("PRAGMA foreign_keys = ON;")
-    conn.row_factory = sqlite3.Row
-    cursor = conn.cursor()
-    try:
-        yield cursor
-        conn.commit()
-    except Exception:
-        conn.rollback()
-        raise
-    finally:
-        cursor.close()
-        conn.close()
 
 
 def process_icon(icon_name, icon_data, source_catalog):
@@ -166,22 +146,12 @@ def process_icon(icon_name, icon_data, source_catalog):
     return icon_name
 
 
-def sync_and_compile_icons():
+def sync_and_process_icons():
     """Download, filter, sanitize, and store the icon catalog."""
     icon_files = list(Path(ICON_DIR).glob("*.svg", case_sensitive=False))
     if icon_files:
-        # Icons exist on disk: rebuild catalog from filesystem
-        print(f"Found {len(icon_files)} icons on disk, rebuilding catalog...")
-        found_icon_ids = sorted(
-            os.path.splitext(os.path.basename(f))[0] for f in icon_files
-        )
-        with get_db() as db:
-            db.execute("DELETE FROM site_config WHERE key = 'icon_catalog_json'")
-            db.execute(
-                "INSERT INTO site_config (key, value) VALUES ('icon_catalog_json', ?)",
-                (json.dumps(found_icon_ids),),
-            )
-
+        # Icons exist on disk, no need to download anything
+        print(f"Found {len(icon_files)} icons on disk, nothing to do.")
         return
 
     print("Downloading source catalog...")
@@ -208,25 +178,12 @@ def sync_and_compile_icons():
         if process_icon(name, data, source_catalog):
             valid_icon_ids.append(name)
 
-    # Sort alphabetically for consistent output
-    valid_icon_ids.sort()
-
-    # Store the simple list of IDs in the Database
-    # We store just the IDs because display names can be reconstructed in the app,
-    # and dimensions are irrelevant as they will be scaled to fit buttons anyway.
-    with get_db() as db:
-        db.execute("DELETE FROM site_config WHERE key = 'icon_catalog_json'")
-        db.execute(
-            "INSERT INTO site_config (key, value) VALUES ('icon_catalog_json', ?)",
-            (json.dumps(valid_icon_ids),),
-        )
-
-    print(f"Done! Compiled {len(valid_icon_ids)} valid icons into database.")
+    print(f"Done! Synced and processed {len(valid_icon_ids)} valid icons.")
 
 
 if __name__ == "__main__":
     try:
-        sync_and_compile_icons()
+        sync_and_process_icons()
     except Exception as e:
         print(f"Error: {e}")
         exit(1)
