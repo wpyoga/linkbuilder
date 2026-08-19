@@ -5,10 +5,13 @@ After=network.target
 [Service]
 User=www-data
 Group=www-data
+Restart=on-failure
+RestartSec=5s
 WorkingDirectory=/opt/linkbuilder
 EnvironmentFile=/etc/default/linkbuilder
-ExecStartPre=/opt/linkbuilder/venv/bin/flask init-db
-ExecStart=/opt/linkbuilder/venv/bin/python3 app.py
+ExecStartPre=/opt/linkbuilder/venv/bin/python3 init-db.py
+ExecStartPre=/opt/linkbuilder/venv/bin/python3 sync-icons.py
+ExecStart=/opt/linkbuilder/venv/bin/gunicorn --bind 0.0.0.0:8000 --workers 2 --threads 4 app:app
 
 [Install]
 WantedBy=multi-user.target
