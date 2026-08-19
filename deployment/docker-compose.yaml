@@ -6,12 +6,12 @@ services:
     environment:
       - DB_PATH=/app/data/app.db
       - OUTPUT_DIR=/app/pub
-      - SUPERADMIN_PASSWORD=${SUPERADMIN_PASSWORD}
+      - SUPERADMIN_PASSWORD
     volumes:
       - db_data:/app/data
-      - ./pub:/app/pub
+      - /srv/www/example.com/@info:/app/pub
     ports:
-      - 5000:8000
+      - 8000:8000
 
 volumes:
   db_data:

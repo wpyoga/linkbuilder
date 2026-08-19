@@ -4,7 +4,7 @@
 set -e
 
 echo "Initializing application data"
-flask init-db
+python3 init-db.py
 
 echo "Starting application"
 # Use exec to run this command, so that it replaces this script as PID 1

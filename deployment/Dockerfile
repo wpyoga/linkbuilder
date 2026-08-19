@@ -13,12 +13,19 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy entrypoint script
-COPY deployment/entrypoint.sh /
+# Copy our favicon
+RUN mkdir static
+COPY static/linkbuilder.svg static
+
+# Entrypoint script
+COPY deployment/entrypoint.sh .
 
 # Copy application source code
 COPY templates templates
 COPY app.py .
+COPY config.py .
+COPY init-db.py .
+COPY sync-icons.py .
 
 # Create a non-root user for security
 # These commands are instant, so just combine everything in one RUN directive
@@ -26,17 +33,14 @@ COPY app.py .
 RUN useradd -m appuser \
     && mkdir /app/data \
     && mkdir /app/pub \
-    && chown -R appuser:appuser /app \
-    && chmod +x /entrypoint.sh
+    && chmod +x /app/entrypoint.sh \
+    && chown -R appuser:appuser /app
 
 # Switch to non-root user for security
 USER appuser
-
-# Initialize app data
-RUN python3 init-db.py
 
 # Prepare button icons
 RUN python3 sync-icons.py
 
 # Run Gunicorn binding to all interfaces on port 8000
-CMD ["/entrypoint.sh"]
+ENTRYPOINT ["/app/entrypoint.sh"]
