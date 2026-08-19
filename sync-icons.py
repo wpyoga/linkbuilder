@@ -147,7 +147,7 @@ def process_icon(icon_name, icon_data, source_catalog):
 
 
 def sync_and_process_icons():
-    """Download, filter, sanitize, and store the icon catalog."""
+    """Download the icon catalog, then filter, sanitize, and store the icons."""
     icon_files = list(Path(ICON_DIR).glob("*.svg", case_sensitive=False))
     if icon_files:
         # Icons exist on disk, no need to download anything

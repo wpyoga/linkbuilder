@@ -1,10 +1,10 @@
-#!/usr/bin/env python3
 import os
 import tempfile
 import secrets
-import sqlite3
 from contextlib import contextmanager
+
 from werkzeug.security import generate_password_hash
+import sqlite3
 
 from config import DB_PATH, SECRET_KEY_FILE, DEPLOYMENT_SUPERADMIN_USER
 
@@ -54,9 +54,7 @@ def init_db():
                 )
             """)
 
-            # Create site configuration table. Note: We store the icon catalog JSON here
-            # under the key 'icon_catalog_json'. This allows the app to load the filtered
-            # list of valid icons without parsing XML or hitting the network at runtime.
+            # Create site configuration table.
             db.execute("""
                 CREATE TABLE IF NOT EXISTS site_config (
                     key TEXT PRIMARY KEY,
@@ -64,12 +62,6 @@ def init_db():
                     blob_value BLOB
                 )
             """)
-
-            # Clear existing icon catalog from DB to force refresh on next sync/startup.
-            # This ensures that if the filtering criteria in sync-icons.py changes, stale
-            # icons don't persist in the admin UI.
-            db.execute("DELETE FROM site_config WHERE key = 'icon_catalog_json'")
-            print("Cleared existing icon catalog from database.")
 
             # Seed initial administrative user into the database if absent. If no password is
             # provided via SUPERADMIN_PASSWORD, generate a random one and print it once so the

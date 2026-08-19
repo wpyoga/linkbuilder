@@ -29,8 +29,7 @@ SECRET_KEY_FILE = os.environ.get(
 STATIC_DIR = os.path.join(BASE_DIR, "static")
 ICON_DIR = os.path.join(STATIC_DIR, "icons")
 
-# Source URL for the upstream Iconify catalog. We download this, filter it, and store
-# our own custom catalog in the database.
+# Source URL for the upstream Iconify SVG Logos catalog.
 ICON_SRC_URL = os.environ.get(
     "ICON_CATALOG_URL",
     "https://raw.githubusercontent.com/iconify/icon-sets/master/json/logos.json",
