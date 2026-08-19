@@ -345,65 +345,111 @@
         <label>Favicon Image (.ico, .png, .jpg, .svg)</label>
         <input type="file"
                name="favicon"
-               accept="image/*,.svg"
+               accept="image/*,.ico"
                id="favicon-input"
+               style="display: none"
                onchange="previewImage(this, 'favicon-preview', 'favicon-status')" />
         {% if data.has_favicon %}
-          <div id="favicon-preview-container" style="margin-top: 8px;">
-            <img id="favicon-preview"
-                 src="{{ data.favicon_preview }}"
-                 alt="Current favicon"
-                 style="max-width: 64px;
-                        max-height: 64px;
-                        border: 1px solid #ddd;
-                        border-radius: 4px" />
+          <div style="margin-top: 8px;">
+            <div id="favicon-preview-container"
+                 style="display: inline-block;
+                        cursor: pointer;
+                        vertical-align: top"
+                 onclick="document.getElementById('favicon-input').click()">
+              <img id="favicon-preview"
+                   src="{{ data.favicon_preview }}"
+                   alt="Current favicon"
+                   style="max-width: 64px;
+                          max-height: 64px;
+                          border: 1px solid #ddd;
+                          border-radius: 4px" />
+            </div>
+            <button type="button"
+                    id="favicon-remove-btn"
+                    class="color-reset-btn"
+                    style="margin-left: 10px;
+                           vertical-align: top"
+                    onclick="removeImage('favicon')">Remove</button>
             <small id="favicon-status"
                    style="color: #16a34a;
                           display: block;
                           margin-top: 4px">Custom favicon currently stored</small>
           </div>
         {% else %}
-          <div id="favicon-preview-container" style="margin-top: 8px; display: none">
-            <img id="favicon-preview"
-                 src=""
-                 alt="Favicon preview"
-                 style="max-width: 64px;
-                        max-height: 64px;
-                        border: 1px solid #ddd;
-                        border-radius: 4px" />
-            <small id="favicon-status" style="display: none;"></small>
+          <div id="favicon-preview-container"
+               style="margin-top: 8px;
+                      display: inline-block;
+                      cursor: pointer;
+                      width: 64px;
+                      height: 64px;
+                      border: 2px dashed #cbd5e1;
+                      border-radius: 4px;
+                      background: #f8fafc;
+                      vertical-align: top"
+               onclick="document.getElementById('favicon-input').click()">
+            <div style="display: flex;
+                        align-items: center;
+                        justify-content: center;
+                        height: 100%;
+                        color: #64748b;
+                        font-size: 0.75rem;
+                        text-align: center;
+                        padding: 4px">No favicon</div>
           </div>
         {% endif %}
-        <label>Organization Logo Header (.png, .jpg, .svg)</label>
+        <label style="display: block; margin-top: 16px;">Organization Logo Header (.png, .jpg, .svg)</label>
         <input type="file"
                name="org_logo"
                accept="image/*"
                id="org-logo-input"
+               style="display: none"
                onchange="previewImage(this, 'logo-preview', 'logo-status')" />
         {% if data.has_org_logo %}
-          <div id="logo-preview-container" style="margin-top: 8px;">
-            <img id="logo-preview"
-                 src="{{ data.logo_preview }}"
-                 alt="Current logo"
-                 style="max-width: 200px;
-                        max-height: 100px;
-                        border: 1px solid #ddd;
-                        border-radius: 4px" />
+          <div style="margin-top: 8px;">
+            <div id="logo-preview-container"
+                 style="display: inline-block;
+                        cursor: pointer;
+                        vertical-align: top"
+                 onclick="document.getElementById('org-logo-input').click()">
+              <img id="logo-preview"
+                   src="{{ data.logo_preview }}"
+                   alt="Current logo"
+                   style="max-width: 200px;
+                          max-height: 100px;
+                          border: 1px solid #ddd;
+                          border-radius: 4px" />
+            </div>
+            <button type="button"
+                    id="logo-remove-btn"
+                    class="color-reset-btn"
+                    style="margin-left: 10px;
+                           vertical-align: top"
+                    onclick="removeImage('logo')">Remove</button>
             <small id="logo-status"
                    style="color: #16a34a;
                           display: block;
                           margin-top: 4px">Custom logo currently stored</small>
           </div>
         {% else %}
-          <div id="logo-preview-container" style="margin-top: 8px; display: none;">
-            <img id="logo-preview"
-                 src=""
-                 alt="Logo preview"
-                 style="max-width: 200px;
-                        max-height: 100px;
-                        border: 1px solid #ddd;
-                        border-radius: 4px" />
-            <small id="logo-status" style="display: none;"></small>
+          <div id="logo-preview-container"
+               style="margin-top: 8px;
+                      display: inline-block;
+                      cursor: pointer;
+                      width: 200px;
+                      height: 100px;
+                      border: 2px dashed #cbd5e1;
+                      border-radius: 4px;
+                      background: #f8fafc;
+                      vertical-align: top"
+               onclick="document.getElementById('org-logo-input').click()">
+            <div style="display: flex;
+                        align-items: center;
+                        justify-content: center;
+                        height: 100%;
+                        color: #64748b;
+                        font-size: 0.85rem;
+                        text-align: center;
+                        padding: 8px">No Org Logo</div>
           </div>
         {% endif %}
       </div>
@@ -829,28 +875,99 @@
 
     function previewImage(input, previewId, statusId) {
       const container = document.getElementById(previewId + '-container');
-      const preview = document.getElementById(previewId);
-      const status = document.getElementById(statusId);
+      const isFavicon = previewId === 'favicon-preview';
+      const inputId = isFavicon ? 'favicon-input' : 'org-logo-input';
+      const removeBtnId = isFavicon ? 'favicon-remove-btn' : 'logo-remove-btn';
+      const statusEl = document.getElementById(statusId);
 
       if (input.files && input.files[0]) {
         const file = input.files[0];
         const reader = new FileReader();
 
         reader.onload = function(e) {
-          preview.src = e.target.result;
-          container.style.display = 'block';
-          // Hide the "currently stored" message when a new file is selected
-          if (status) {
-            status.style.display = 'none';
+          const width = isFavicon ? '64px' : '200px';
+          const height = isFavicon ? '64px' : '100px';
+
+          // Update container style and content
+          container.style.cssText = `display: inline-block; cursor: pointer; vertical-align: top;`;
+          container.innerHTML = `
+            <img id="${previewId}" src="${e.target.result}" alt="${isFavicon ? 'Favicon preview' : 'Logo preview'}" style="max-width: ${width}; max-height: ${height}; border: 1px solid #ddd; border-radius: 4px" />
+          `;
+
+          // Re-attach click handler to open file picker
+          container.onclick = function() {
+            document.getElementById(inputId).click();
+          };
+
+          // Hide the status text
+          if (statusEl) {
+            statusEl.style.display = 'none';
           }
+
+          // Remove any existing Remove button by ID
+          const existingBtn = document.getElementById(removeBtnId);
+          if (existingBtn) {
+            existingBtn.remove();
+          }
+
+          // Add remove button with unique ID - insert after container's parent
+          const removeBtn = document.createElement('button');
+          removeBtn.type = 'button';
+          removeBtn.id = removeBtnId;
+          removeBtn.className = 'color-reset-btn';
+          removeBtn.style.cssText = 'margin-left: 10px; vertical-align: top;';
+          removeBtn.textContent = 'Remove';
+          removeBtn.onclick = function(e) {
+            e.stopPropagation();
+            removeImage(isFavicon ? 'favicon' : 'logo');
+          };
+
+          // Insert after the container (which is now inside a wrapper div)
+          container.parentNode.insertBefore(removeBtn, container.nextSibling);
         };
 
         reader.readAsDataURL(file);
-      } else {
-        // If no file selected, hide preview if it wasn't there initially
-        if (!preview.src || preview.src === window.location.href) {
-          container.style.display = 'none';
-        }
+      }
+    }
+
+    function removeImage(type) {
+      const isFavicon = type === 'favicon';
+      const inputId = isFavicon ? 'favicon-input' : 'org-logo-input';
+      const containerId = isFavicon ? 'favicon-preview-container' : 'logo-preview-container';
+      const removeBtnId = isFavicon ? 'favicon-remove-btn' : 'logo-remove-btn';
+      const statusId = isFavicon ? 'favicon-status' : 'logo-status';
+      const defaultText = isFavicon ? 'No favicon' : 'No Org Logo';
+      const width = isFavicon ? '64px' : '200px';
+      const height = isFavicon ? '64px' : '100px';
+      const fontSize = isFavicon ? '0.75rem' : '0.85rem';
+      const padding = isFavicon ? '4px' : '8px';
+
+      // Clear the file input
+      document.getElementById(inputId).value = '';
+
+      // Replace container with "no icon" placeholder
+      const container = document.getElementById(containerId);
+      container.style.cssText = `display: inline-block; cursor: pointer; width: ${width}; height: ${height}; border: 2px dashed #cbd5e1; border-radius: 4px; background: #f8fafc; vertical-align: top;`;
+      container.innerHTML = `
+        <div style="display: flex; align-items: center; justify-content: center; height: 100%; color: #64748b; font-size: ${fontSize}; text-align: center; padding: ${padding};">
+          ${defaultText}
+        </div>
+      `;
+      container.onclick = function() {
+        document.getElementById(inputId).click();
+      };
+
+      // Show the status text again (it will say "currently stored" but that's OK since we just removed it)
+      const statusEl = document.getElementById(statusId);
+      if (statusEl) {
+        statusEl.style.display = 'block';
+        statusEl.textContent = ''; // Clear the text since there's nothing stored now
+      }
+
+      // Remove the Remove button by ID
+      const removeBtn = document.getElementById(removeBtnId);
+      if (removeBtn) {
+        removeBtn.remove();
       }
     }
   </script>
