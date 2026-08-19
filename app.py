@@ -371,33 +371,23 @@ def bake_static_site():
 
     favicon_filename = logo_filename = None
     with get_db() as db:
-        # Export binary favicon from site config if present in database
+        # Export binary favicon
         fav_row = db.execute(
-            "SELECT blob_value FROM site_config WHERE key='favicon_blob'"
+            "SELECT value, blob_value FROM site_config WHERE key='favicon'"
         ).fetchone()
         if fav_row and fav_row["blob_value"]:
-            ext = (
-                db.execute(
-                    "SELECT value FROM site_config WHERE key='favicon_ext'"
-                ).fetchone()["value"]
-                or ".ico"
-            )
-            favicon_filename = f"favicon{ext}"
+            ext = fav_row["value"] or "ico"
+            favicon_filename = f"favicon.{ext}"
             with open(os.path.join(OUTPUT_DIR, favicon_filename), "wb") as f:
                 f.write(fav_row["blob_value"])
 
-        # Export binary logo image from site config if present in database
+        # Export binary logo
         logo_row = db.execute(
-            "SELECT blob_value FROM site_config WHERE key='org_logo_blob'"
+            "SELECT value, blob_value FROM site_config WHERE key='org_logo'"
         ).fetchone()
         if logo_row and logo_row["blob_value"]:
-            ext = (
-                db.execute(
-                    "SELECT value FROM site_config WHERE key='org_logo_ext'"
-                ).fetchone()["value"]
-                or ".png"
-            )
-            logo_filename = f"logo{ext}"
+            ext = logo_row["value"] or "png"
+            logo_filename = f"logo.{ext}"
             with open(os.path.join(OUTPUT_DIR, logo_filename), "wb") as f:
                 f.write(logo_row["blob_value"])
 
@@ -495,17 +485,18 @@ def get_icon_catalog_metadata():
     return []
 
 
-def store_image_from_form_data(db, data_field, ext_field, blob_key, ext_key):
+def store_image_from_form_data(db, data_field, blob_key):
     """
-    Store image from base64 form data hidden fields.
-    If data is empty, it deletes the existing image from the DB.
+    Store image from base64 form data hidden fields into a single row.
+    value = extension (e.g., 'png'), blob_value = binary data.
+    If data is empty, it deletes the existing image.
     """
     b64_data = request.form.get(data_field, "").strip()
-    ext = request.form.get(ext_field, "").strip()
+    ext = request.form.get(data_field.replace("_data", "_ext"), "").strip()
 
     # If no data provided, delete any existing image for this key
     if not b64_data or not ext:
-        db.execute("DELETE FROM site_config WHERE key IN (?, ?)", (blob_key, ext_key))
+        db.execute("DELETE FROM site_config WHERE key = ?", (blob_key,))
         return
 
     try:
@@ -545,31 +536,24 @@ def store_image_from_form_data(db, data_field, ext_field, blob_key, ext_key):
                 f"Image format mismatch: expected {expected_ext}, got {ext}"
             )
 
-    # Store in database
+    # Store in database: value=ext (without dot), blob_value=data
+    clean_ext = ext.lstrip(".")
     db.execute(
-        "INSERT OR REPLACE INTO site_config (key, value, blob_value) VALUES (?, 'present', ?)",
-        (blob_key, sqlite3.Binary(raw_bytes)),
-    )
-    db.execute(
-        "INSERT OR REPLACE INTO site_config (key, value) VALUES (?, ?)", (ext_key, ext)
+        "INSERT OR REPLACE INTO site_config (key, value, blob_value) VALUES (?, ?, ?)",
+        (blob_key, clean_ext, sqlite3.Binary(raw_bytes)),
     )
 
 
-def get_current_image_preview(db, blob_key, ext_key):
+def get_current_image_preview(db, blob_key):
     """Retrieve stored image bytes and extension for preview display."""
-    # Query both rows separately to ensure we get the right data
-    blob_row = db.execute(
+    row = db.execute(
         "SELECT value, blob_value FROM site_config WHERE key = ?", (blob_key,)
     ).fetchone()
 
-    ext_row = db.execute(
-        "SELECT value FROM site_config WHERE key = ?", (ext_key,)
-    ).fetchone()
-
-    if not blob_row or not blob_row["blob_value"]:
+    if not row or not row["blob_value"]:
         return None, None
 
-    return blob_row["blob_value"], ext_row["value"] if ext_row else None
+    return row["blob_value"], row["value"]
 
 
 # -----------------------------------------------------------------------------
@@ -635,12 +619,8 @@ def admin():
         buttons = json.loads(config.get("buttons_json", "[]"))
 
         # Get current favicon and logo for preview
-        favicon_data, favicon_ext = get_current_image_preview(
-            db, "favicon_blob", "favicon_ext"
-        )
-        logo_data, logo_ext = get_current_image_preview(
-            db, "org_logo_blob", "org_logo_ext"
-        )
+        favicon_data, favicon_ext = get_current_image_preview(db, "favicon")
+        logo_data, logo_ext = get_current_image_preview(db, "org_logo")
 
         data = {
             "title": config.get("title", ""),
@@ -658,19 +638,13 @@ def admin():
         if favicon_data:
             b64_favicon = base64.b64encode(favicon_data).decode("utf-8")
             mime_type = (
-                "image/svg+xml"
-                if favicon_ext == ".svg"
-                else f"image/{favicon_ext.lstrip('.')}"
+                "image/svg+xml" if favicon_ext == "svg" else f"image/{favicon_ext}"
             )
             data["favicon_preview"] = f"data:{mime_type};base64,{b64_favicon}"
 
         if logo_data:
             b64_logo = base64.b64encode(logo_data).decode("utf-8")
-            mime_type = (
-                "image/svg+xml"
-                if logo_ext == ".svg"
-                else f"image/{logo_ext.lstrip('.')}"
-            )
+            mime_type = "image/svg+xml" if logo_ext == "svg" else f"image/{logo_ext}"
             data["logo_preview"] = f"data:{mime_type};base64,{b64_logo}"
 
     icon_catalog = get_icon_catalog_metadata()
@@ -779,12 +753,8 @@ def save():
                 )
 
             # Write images from hidden form fields
-            store_image_from_form_data(
-                db, "favicon_data", "favicon_ext", "favicon_blob", "favicon_ext"
-            )
-            store_image_from_form_data(
-                db, "logo_data", "logo_ext", "org_logo_blob", "org_logo_ext"
-            )
+            store_image_from_form_data(db, "favicon_data", "favicon")
+            store_image_from_form_data(db, "logo_data", "org_logo")
     except ValueError as e:
         flash(f"Image upload error: {e}", "danger")
         return render_template("admin.jinja2", data=state, user=current_user), 400
