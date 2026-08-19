@@ -4,7 +4,8 @@ import io
 import json
 import math
 import urllib.request
-import defusedxml.ElementTree as DefusedET
+from xml.etree import ElementTree as ET
+from defusedxml import ElementTree as DefusedET
 from svgelements import SVG
 import sqlite3
 from contextlib import contextmanager
@@ -67,7 +68,7 @@ def process_icon(icon_name, icon_data, source_catalog):
     except Exception:
         return None
 
-    root = DefusedET.Element(
+    root = ET.Element(
         "{http://www.w3.org/2000/svg}svg",
         {
             "width": str(source_width),
@@ -96,7 +97,7 @@ def process_icon(icon_name, icon_data, source_catalog):
                 sanitize(child)
 
     sanitize(root)
-    DefusedET.register_namespace("", "http://www.w3.org/2000/svg")
+    ET.register_namespace("", "http://www.w3.org/2000/svg")
 
     # Parse for geometry calculation using svgelements
     svg_bytes = DefusedET.tostring(root, encoding="utf-8")
@@ -158,7 +159,7 @@ def process_icon(icon_name, icon_data, source_catalog):
     os.makedirs(ICON_DIR, exist_ok=True)
     output_path = os.path.join(ICON_DIR, f"{icon_name}.svg")
     tmp_path = f"{output_path}.tmp"
-    DefusedET.ElementTree(root).write(tmp_path, encoding="utf-8", xml_declaration=True)
+    ET.ElementTree(root).write(tmp_path, encoding="utf-8", xml_declaration=True)
     os.replace(tmp_path, output_path)
 
     return icon_name
