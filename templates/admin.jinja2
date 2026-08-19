@@ -308,6 +308,16 @@
           onsubmit="return serializeButtonsBeforeSubmit();">
       <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
       <input type="hidden" name="buttons_json" id="buttons-json-field" value="" />
+      <input type="hidden"
+             name="favicon_data"
+             id="favicon-data-field"
+             value="{{ data.favicon_preview or '' }}" />
+      <input type="hidden" name="favicon_ext" id="favicon-ext-field" value="" />
+      <input type="hidden"
+             name="logo_data"
+             id="logo-data-field"
+             value="{{ data.logo_preview or '' }}" />
+      <input type="hidden" name="logo_ext" id="logo-ext-field" value="" />
       <div class="card">
         <h3>General Info & Media</h3>
         <label for="page-title">Page Title / Name</label>
@@ -879,6 +889,8 @@
       const inputId = isFavicon ? 'favicon-input' : 'org-logo-input';
       const removeBtnId = isFavicon ? 'favicon-remove-btn' : 'logo-remove-btn';
       const statusEl = document.getElementById(statusId);
+      const dataFieldId = isFavicon ? 'favicon-data-field' : 'logo-data-field';
+      const extFieldId = isFavicon ? 'favicon-ext-field' : 'logo-ext-field';
 
       if (input.files && input.files[0]) {
         const file = input.files[0];
@@ -888,29 +900,24 @@
           const width = isFavicon ? '64px' : '200px';
           const height = isFavicon ? '64px' : '100px';
 
-          // Update container style and content
           container.style.cssText = `display: inline-block; cursor: pointer; vertical-align: top;`;
           container.innerHTML = `
             <img id="${previewId}" src="${e.target.result}" alt="${isFavicon ? 'Favicon preview' : 'Logo preview'}" style="max-width: ${width}; max-height: ${height}; border: 1px solid #ddd; border-radius: 4px" />
           `;
 
-          // Re-attach click handler to open file picker
           container.onclick = function() {
             document.getElementById(inputId).click();
           };
 
-          // Hide the status text
           if (statusEl) {
             statusEl.style.display = 'none';
           }
 
-          // Remove any existing Remove button by ID
           const existingBtn = document.getElementById(removeBtnId);
           if (existingBtn) {
             existingBtn.remove();
           }
 
-          // Add remove button with unique ID - insert after container's parent
           const removeBtn = document.createElement('button');
           removeBtn.type = 'button';
           removeBtn.id = removeBtnId;
@@ -921,9 +928,23 @@
             e.stopPropagation();
             removeImage(isFavicon ? 'favicon' : 'logo');
           };
-
-          // Insert after the container (which is now inside a wrapper div)
           container.parentNode.insertBefore(removeBtn, container.nextSibling);
+
+          // Update hidden fields immediately
+          const dataField = document.getElementById(dataFieldId);
+          const extField = document.getElementById(extFieldId);
+          const mimeMatch = e.target.result.match(/^data:(image\/[^;]+);base64,/);
+          if (mimeMatch) {
+            const mimeType = mimeMatch[1];
+            let ext = '';
+            if (mimeType === 'image/svg+xml') ext = '.svg';
+            else if (mimeType === 'image/png') ext = '.png';
+            else if (mimeType === 'image/jpeg') ext = '.jpg';
+            else if (mimeType === 'image/x-icon' || mimeType === 'image/vnd.microsoft.icon') ext = '.ico';
+
+            dataField.value = e.target.result.split(',')[1];
+            extField.value = ext;
+          }
         };
 
         reader.readAsDataURL(file);
@@ -936,16 +957,20 @@
       const containerId = isFavicon ? 'favicon-preview-container' : 'logo-preview-container';
       const removeBtnId = isFavicon ? 'favicon-remove-btn' : 'logo-remove-btn';
       const statusId = isFavicon ? 'favicon-status' : 'logo-status';
+      const dataFieldId = isFavicon ? 'favicon-data-field' : 'logo-data-field';
+      const extFieldId = isFavicon ? 'favicon-ext-field' : 'logo-ext-field';
       const defaultText = isFavicon ? 'No favicon' : 'No Org Logo';
       const width = isFavicon ? '64px' : '200px';
       const height = isFavicon ? '64px' : '100px';
       const fontSize = isFavicon ? '0.75rem' : '0.85rem';
       const padding = isFavicon ? '4px' : '8px';
 
-      // Clear the file input
       document.getElementById(inputId).value = '';
 
-      // Replace container with "no icon" placeholder
+      // Clear hidden fields
+      document.getElementById(dataFieldId).value = '';
+      document.getElementById(extFieldId).value = '';
+
       const container = document.getElementById(containerId);
       container.style.cssText = `display: inline-block; cursor: pointer; width: ${width}; height: ${height}; border: 2px dashed #cbd5e1; border-radius: 4px; background: #f8fafc; vertical-align: top;`;
       container.innerHTML = `
@@ -957,17 +982,54 @@
         document.getElementById(inputId).click();
       };
 
-      // Show the status text again (it will say "currently stored" but that's OK since we just removed it)
       const statusEl = document.getElementById(statusId);
       if (statusEl) {
-        statusEl.style.display = 'block';
-        statusEl.textContent = ''; // Clear the text since there's nothing stored now
+        statusEl.style.display = 'none';
       }
 
-      // Remove the Remove button by ID
       const removeBtn = document.getElementById(removeBtnId);
       if (removeBtn) {
         removeBtn.remove();
+      }
+    }
+
+    function serializeButtonsBeforeSubmit() {
+      document.getElementById("buttons-json-field").value = collectButtonsAsJson();
+
+      // Encode current preview images as base64 for submission
+      encodeCurrentImage('favicon-preview', 'favicon-data-field', 'favicon-ext-field');
+      encodeCurrentImage('logo-preview', 'logo-data-field', 'logo-ext-field');
+
+      return true;
+    }
+
+    function encodeCurrentImage(imgId, dataFieldId, extFieldId) {
+      const img = document.getElementById(imgId);
+      const dataField = document.getElementById(dataFieldId);
+      const extField = document.getElementById(extFieldId);
+
+      console.log(`encodeCurrentImage: imgId=${imgId}, img.src starts with data: ${img?.src?.startsWith('data:')}`);
+      console.log(`encodeCurrentImage: img.src length=${img?.src?.length}, first 100 chars: ${img?.src?.substring(0, 100)}`);
+
+      if (img && img.src && img.src.startsWith('data:')) {
+        // Extract MIME type from data URL
+        const match = img.src.match(/^data:(image\/[^;]+);base64,/);
+        if (match) {
+          const mimeType = match[1];
+          let ext = '';
+          if (mimeType === 'image/svg+xml') ext = '.svg';
+          else if (mimeType === 'image/png') ext = '.png';
+          else if (mimeType === 'image/jpeg') ext = '.jpg';
+          else if (mimeType === 'image/x-icon' || mimeType === 'image/vnd.microsoft.icon') ext = '.ico';
+
+          dataField.value = img.src.split(',')[1]; // base64 part only
+          extField.value = ext;
+        }
+      } else {
+        // No image present
+        console.log(`encodeCurrentImage: No valid image found, clearing fields`);
+        dataField.value = '';
+        extField.value = '';
       }
     }
   </script>

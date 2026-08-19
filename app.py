@@ -3,9 +3,11 @@ import json
 import sqlite3
 import io
 import shutil
+import base64
 from contextlib import contextmanager
 from urllib.parse import urlparse
 from pathlib import Path
+import xml.etree.ElementTree as ET
 
 from flask import Flask, render_template, request, redirect, url_for, flash, session
 from flask_login import (
@@ -181,7 +183,6 @@ def validate_vcard_phone(phone: str) -> bool:
     phone = (phone or "").strip()
     if not phone:
         return True
-    import re
 
     if not re.fullmatch(r"\+[0-9][0-9 -]*", phone):
         return False
@@ -494,36 +495,40 @@ def get_icon_catalog_metadata():
     return []
 
 
-def store_uploaded_image(db, file_field_name, blob_key, ext_key):
+def store_image_from_form_data(db, data_field, ext_field, blob_key, ext_key):
     """
-    Shared logic for handling the favicon/org_logo upload fields in /save.
-    Validates the image, then stores its bytes and resolved extension in site_config.
+    Store image from base64 form data hidden fields.
+    If data is empty, it deletes the existing image from the DB.
     """
-    if file_field_name not in request.files:
-        return
-    file = request.files[file_field_name]
-    if not file or file.filename == "":
+    b64_data = request.form.get(data_field, "").strip()
+    ext = request.form.get(ext_field, "").strip()
+
+    # If no data provided, delete any existing image for this key
+    if not b64_data or not ext:
+        db.execute("DELETE FROM site_config WHERE key IN (?, ?)", (blob_key, ext_key))
         return
 
-    raw_bytes = file.read()
+    try:
+        raw_bytes = base64.b64decode(b64_data)
+    except Exception:
+        raise ValueError("Invalid image data encoding.")
+
     if not raw_bytes:
         raise ValueError("Uploaded file is empty.")
 
-    # Check if it's an SVG
+    # Validate SVG or raster image
     head = raw_bytes[:512].lstrip().lower()
     is_svg = head.startswith(b"<?xml") or b"<svg" in head
 
     if is_svg:
-        # For SVG, just validate it's well-formed XML and store it
+        if ext != ".svg":
+            raise ValueError("File appears to be SVG but extension mismatch.")
         try:
-            import xml.etree.ElementTree as ET
-
             ET.fromstring(raw_bytes)
         except ET.ParseError:
             raise ValueError("File is not a valid SVG/XML file.")
-        ext = ".svg"
     else:
-        # Otherwise, treat it as a raster image and let Pillow verify the structure.
+        # Raster image validation using Pillow
         try:
             with Image.open(io.BytesIO(raw_bytes)) as img:
                 img.verify()
@@ -532,10 +537,15 @@ def store_uploaded_image(db, file_field_name, blob_key, ext_key):
         except UnidentifiedImageError:
             raise ValueError("File is not a recognized image format.")
 
-        ext = RASTER_FORMAT_EXTENSIONS.get(fmt)
-        if not ext:
+        expected_ext = RASTER_FORMAT_EXTENSIONS.get(fmt)
+        if not expected_ext:
             raise ValueError(f"Image format '{fmt}' is not supported.")
+        if expected_ext != ext:
+            raise ValueError(
+                f"Image format mismatch: expected {expected_ext}, got {ext}"
+            )
 
+    # Store in database
     db.execute(
         "INSERT OR REPLACE INTO site_config (key, value, blob_value) VALUES (?, 'present', ?)",
         (blob_key, sqlite3.Binary(raw_bytes)),
@@ -644,7 +654,6 @@ def admin():
         }
 
         # Convert binary data to base64 for inline preview
-        import base64
 
         if favicon_data:
             b64_favicon = base64.b64encode(favicon_data).decode("utf-8")
@@ -752,6 +761,10 @@ def save():
 
     try:
         with get_db() as db:
+            # Clear all existing site config before writing new state
+            db.execute("DELETE FROM site_config")
+
+            # Write text config
             for k, v in [
                 ("title", title),
                 ("bio", bio),
@@ -761,11 +774,17 @@ def save():
                 ("buttons_json", json.dumps(parsed_buttons)),
             ]:
                 db.execute(
-                    "INSERT OR REPLACE INTO site_config (key,value) VALUES (?,?)",
+                    "INSERT INTO site_config (key, value) VALUES (?, ?)",
                     (k, v),
                 )
-            store_uploaded_image(db, "favicon", "favicon_blob", "favicon_ext")
-            store_uploaded_image(db, "org_logo", "org_logo_blob", "org_logo_ext")
+
+            # Write images from hidden form fields
+            store_image_from_form_data(
+                db, "favicon_data", "favicon_ext", "favicon_blob", "favicon_ext"
+            )
+            store_image_from_form_data(
+                db, "logo_data", "logo_ext", "org_logo_blob", "org_logo_ext"
+            )
     except ValueError as e:
         flash(f"Image upload error: {e}", "danger")
         return render_template("admin.jinja2", data=state, user=current_user), 400
