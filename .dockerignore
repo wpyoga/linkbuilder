@@ -1,6 +1,7 @@
 # from .gitignore
 venv
 pub
+public_site
 **/*.orig
 **/*.rej
 static/*

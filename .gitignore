@@ -1,5 +1,6 @@
 venv
 pub
+public_site
 static/*
 !static/linkbuilder.svg
 *.svg
