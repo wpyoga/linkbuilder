@@ -4,6 +4,7 @@ import sqlite3
 import io
 import shutil
 import base64
+import mimetypes
 from contextlib import contextmanager
 from urllib.parse import urlparse
 from pathlib import Path
@@ -39,6 +40,90 @@ from config import (
     HEX_COLOR_RE,
     RASTER_FORMAT_EXTENSIONS,
 )
+
+# -----------------------------------------------------------------------------
+# MIME / Extension Mapping
+# -----------------------------------------------------------------------------
+# SECURITY POLICY: These are the ONLY image MIME types accepted for upload.
+# Each entry represents a deliberate security decision — every accepted format
+# is a potential attack vector (polyglot files, parser exploits, SVG XSS).
+# Do NOT expand this list without evaluating the security implications.
+# Formats included: PNG/JPEG (universal raster), SVG (vector, XML-validated),
+# ICO (favicon-native). WebP/AVIF/BMP/TIFF/etc. are excluded because browsers
+# don't reliably render them in favicon/<img> contexts and each adds attack surface.
+SUPPORTED_UPLOAD_MIMES = {
+    "image/png",
+    "image/jpeg",
+    "image/svg+xml",
+    "image/x-icon",
+    "image/vnd.microsoft.icon",
+}
+
+
+def ext_for_mime(mime: str) -> str | None:
+    """
+    Map a MIME type string to a file extension (with leading dot).
+
+    Uses stdlib mimetypes for broad coverage rather than a hand-rolled dict.
+    This function is GENERAL-PURPOSE — it maps any recognized MIME type, not
+    just those in SUPPORTED_UPLOAD_MIMES. This distinction matters because:
+      - Upload validation checks SUPPORTED_UPLOAD_MIMES separately (security policy)
+      - Preview generation / DB reads may encounter historically-stored formats
+      - Adding a new upload format only requires updating SUPPORTED_UPLOAD_MIMES;
+        the mapping derives automatically via mimetypes
+
+    Returns None only if mimetypes itself doesn't recognize the MIME type.
+    Normalizes the historical .jpe quirk on some platforms.
+    """
+    if not mime:
+        return None
+    ext = mimetypes.guess_extension(mime)
+    # Historical quirk: some platforms return .jpe instead of .jpg for JPEG
+    if ext == ".jpe":
+        return ".jpg"
+    return ext
+
+
+def mime_for_ext(ext: str) -> str | None:
+    """
+    Map a file extension (with or without leading dot) to a MIME type string.
+
+    Like ext_for_mime(), this is GENERAL-PURPOSE and uses stdlib mimetypes.
+    It does NOT filter against SUPPORTED_UPLOAD_MIMES — callers enforce that
+    policy at the validation layer where it belongs.
+
+    Returns None if mimetypes doesn't recognize the extension.
+    """
+    if not ext:
+        return None
+    if not ext.startswith("."):
+        ext = f".{ext}"
+    mime, _ = mimetypes.guess_type(f"file{ext}")
+    return mime
+
+
+def build_mime_to_ext_map(mime_set: set[str]) -> dict[str, str]:
+    """
+    Pre-compute a MIME→extension dict for injection into client-side JS.
+
+    Takes an explicit set of MIME types (typically SUPPORTED_UPLOAD_MIMES) so
+    the JS side only knows about formats the server actually accepts. This
+    prevents the client from populating hidden fields with extensions for
+    formats the server would reject anyway.
+
+    Derived automatically from the policy set — adding a new upload format
+    requires only updating SUPPORTED_UPLOAD_MIMES, not maintaining a parallel map.
+    """
+    result = {}
+    for mime in mime_set:
+        ext = ext_for_mime(mime)
+        if ext:
+            result[mime] = ext
+    return result
+
+
+# Pre-compute at module load. Injected into template context as MIME_TO_EXT.
+MIME_TO_EXT_MAP = build_mime_to_ext_map(SUPPORTED_UPLOAD_MIMES)
 
 # -----------------------------------------------------------------------------
 # App Factory & Config
@@ -488,8 +573,13 @@ def get_icon_catalog_metadata():
 def store_image_from_form_data(db, data_field, blob_key):
     """
     Store image from base64 form data hidden fields into a single row.
-    value = extension (e.g., 'png'), blob_value = binary data.
+    value = extension (without dot, e.g. 'png'), blob_value = binary data.
     If data is empty, it deletes the existing image.
+
+    SECURITY: Validates that the claimed extension matches actual file content
+    AND that the MIME type is in SUPPORTED_UPLOAD_MIMES. Both checks are required
+    because extension alone is untrusted (user-controlled) and content sniffing
+    alone doesn't enforce the upload policy.
     """
     b64_data = request.form.get(data_field, "").strip()
     ext = request.form.get(data_field.replace("_data", "_ext"), "").strip()
@@ -507,13 +597,27 @@ def store_image_from_form_data(db, data_field, blob_key):
     if not raw_bytes:
         raise ValueError("Uploaded file is empty.")
 
-    # Validate SVG or raster image
+    # --- Upload policy enforcement ---
+    # Resolve the claimed extension to a MIME type and check against whitelist.
+    # This happens BEFORE content validation so we reject unsupported formats early.
+    claimed_mime = mime_for_ext(ext)
+    if claimed_mime not in SUPPORTED_UPLOAD_MIMES:
+        raise ValueError(
+            f"Unsupported image format '{ext}'. "
+            f"Allowed: {', '.join(sorted(SUPPORTED_UPLOAD_MIMES))}"
+        )
+
+    # --- Content validation ---
+    # Verify the file's actual content matches the claimed type.
+    # SVG requires XML parsing (Pillow doesn't support SVG); raster uses Pillow.
     head = raw_bytes[:512].lstrip().lower()
     is_svg = head.startswith(b"<?xml") or b"<svg" in head
 
     if is_svg:
-        if ext != ".svg":
-            raise ValueError("File appears to be SVG but extension mismatch.")
+        if claimed_mime != "image/svg+xml":
+            raise ValueError(
+                "File appears to be SVG but claimed extension is not .svg."
+            )
         try:
             ET.fromstring(raw_bytes)
         except ET.ParseError:
@@ -531,9 +635,11 @@ def store_image_from_form_data(db, data_field, blob_key):
         expected_ext = RASTER_FORMAT_EXTENSIONS.get(fmt)
         if not expected_ext:
             raise ValueError(f"Image format '{fmt}' is not supported.")
-        if expected_ext != ext:
+        # Compare normalized (no dots) since RASTER_FORMAT_EXTENSIONS values vary
+        expected_clean = expected_ext.lstrip(".")
+        if expected_clean != ext.lstrip("."):
             raise ValueError(
-                f"Image format mismatch: expected {expected_ext}, got {ext}"
+                f"Image format mismatch: expected {expected_clean}, got {ext}"
             )
 
     # Store in database: value=ext (without dot), blob_value=data
@@ -633,23 +739,29 @@ def admin():
             "has_org_logo": logo_data is not None,
         }
 
-        # Convert binary data to base64 for inline preview
-
+        # Convert binary data to base64 data URIs for inline preview.
+        # Uses mime_for_ext() (general-purpose, not filtered by upload policy)
+        # so previews work even for historically-stored formats outside the
+        # current upload whitelist. Falls back to octet-stream if unrecognized.
         if favicon_data:
             b64_favicon = base64.b64encode(favicon_data).decode("utf-8")
-            mime_type = (
-                "image/svg+xml" if favicon_ext == "svg" else f"image/{favicon_ext}"
-            )
+            mime_type = mime_for_ext(favicon_ext) or "application/octet-stream"
             data["favicon_preview"] = f"data:{mime_type};base64,{b64_favicon}"
 
         if logo_data:
             b64_logo = base64.b64encode(logo_data).decode("utf-8")
-            mime_type = "image/svg+xml" if logo_ext == "svg" else f"image/{logo_ext}"
+            mime_type = mime_for_ext(logo_ext) or "application/octet-stream"
             data["logo_preview"] = f"data:{mime_type};base64,{b64_logo}"
 
     icon_catalog = get_icon_catalog_metadata()
     return render_template(
-        "admin.jinja2", data=data, user=current_user, icon_catalog=icon_catalog
+        "admin.jinja2",
+        data=data,
+        user=current_user,
+        icon_catalog=icon_catalog,
+        # Inject server-derived MIME→ext map for JS. Contains only upload-approved
+        # types so the client never populates hidden fields with rejected formats.
+        mime_to_ext_map=MIME_TO_EXT_MAP,
     )
 
 
@@ -701,7 +813,7 @@ def save():
     parsed_buttons, error = validate_buttons_payload(raw_btns)
     try:
         posted_btns = json.loads(raw_btns)
-    except:
+    except Exception:
         posted_btns = []
 
     state = {
@@ -713,25 +825,55 @@ def save():
         "buttons": posted_btns,
     }
 
+    # All error paths must pass mime_to_ext_map so the re-rendered admin page
+    # has the JS constant available. Missing this causes ReferenceError on submit.
     if isinstance(error, dict):
         return (
             render_template(
-                "admin.jinja2", data=state, user=current_user, validation_errors=error
+                "admin.jinja2",
+                data=state,
+                user=current_user,
+                validation_errors=error,
+                mime_to_ext_map=MIME_TO_EXT_MAP,
             ),
             400,
         )
     if theme not in ALLOWED_THEMES:
         flash("Error: Invalid page theme.", "danger")
-        return render_template("admin.jinja2", data=state, user=current_user), 400
+        return (
+            render_template(
+                "admin.jinja2",
+                data=state,
+                user=current_user,
+                mime_to_ext_map=MIME_TO_EXT_MAP,
+            ),
+            400,
+        )
     if not HEX_COLOR_RE.match(bg_l) or not HEX_COLOR_RE.match(bg_d):
         flash(
             "Error: Page background colors must be six-digit hexadecimal colors.",
             "danger",
         )
-        return render_template("admin.jinja2", data=state, user=current_user), 400
+        return (
+            render_template(
+                "admin.jinja2",
+                data=state,
+                user=current_user,
+                mime_to_ext_map=MIME_TO_EXT_MAP,
+            ),
+            400,
+        )
     if error:
         flash(f"Error: {error}", "danger")
-        return render_template("admin.jinja2", data=state, user=current_user), 400
+        return (
+            render_template(
+                "admin.jinja2",
+                data=state,
+                user=current_user,
+                mime_to_ext_map=MIME_TO_EXT_MAP,
+            ),
+            400,
+        )
 
     try:
         with get_db() as db:
@@ -752,16 +894,32 @@ def save():
                     (k, v),
                 )
 
-            # Write images from hidden form fields
+            # Write images from hidden form fields (validates against SUPPORTED_UPLOAD_MIMES)
             store_image_from_form_data(db, "favicon_data", "favicon")
             store_image_from_form_data(db, "logo_data", "org_logo")
     except ValueError as e:
         flash(f"Image upload error: {e}", "danger")
-        return render_template("admin.jinja2", data=state, user=current_user), 400
+        return (
+            render_template(
+                "admin.jinja2",
+                data=state,
+                user=current_user,
+                mime_to_ext_map=MIME_TO_EXT_MAP,
+            ),
+            400,
+        )
     except Exception as e:
         app.logger.error(f"Database error during save: {e}")
         flash("A database error occurred while saving.", "danger")
-        return render_template("admin.jinja2", data=state, user=current_user), 500
+        return (
+            render_template(
+                "admin.jinja2",
+                data=state,
+                user=current_user,
+                mime_to_ext_map=MIME_TO_EXT_MAP,
+            ),
+            500,
+        )
 
     try:
         bake_static_site()

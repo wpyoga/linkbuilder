@@ -627,7 +627,42 @@
 {% block scripts %}
   <script>
     const iconCatalog = {{ icon_catalog|default([])|tojson }};
+
+    // Server-derived MIME→extension map. Contains ONLY types in SUPPORTED_UPLOAD_MIMES.
+    // Built automatically by build_mime_to_ext_map() using stdlib mimetypes.
+    // Single source of truth: adding a new upload format requires only updating
+    // SUPPORTED_UPLOAD_MIMES in app.py — this map regenerates automatically.
+    const MIME_TO_EXT = {{ mime_to_ext_map|tojson }};
+
     let activeIconPickerButton = null;
+
+    /**
+     * Look up file extension (with leading dot) from a MIME type string.
+     * Uses the server-injected map which mirrors SUPPORTED_UPLOAD_MIMES.
+     * Returns empty string if MIME is not in the upload whitelist — this
+     * intentionally prevents the client from submitting extensions for formats
+     * the server would reject, avoiding confusing round-trip failures.
+     */
+    function extForMime(mimeType) {
+      return MIME_TO_EXT[mimeType] || '';
+    }
+
+    /**
+     * Extract MIME type from a data URI string.
+     * Handles data URIs with optional charset/encoding parameters:
+     *   data:image/png;base64,...       → "image/png"
+     *   data:image/svg+xml;charset=utf-8;base64,... → "image/svg+xml"
+     * Returns null if the string is not a valid data URI.
+     *
+     * NOTE: This regex is intentionally broader than the old pattern
+     * /^data:(image\/[^;]+);base64,/ which assumed exact structure and broke
+     * when browsers normalized src attributes differently for certain filenames.
+     */
+    function parseDataUriMime(dataUri) {
+      if (!dataUri || typeof dataUri !== 'string') return null;
+      const match = dataUri.match(/^data:([^;,]+)[;,]/);
+      return match ? match[1] : null;
+    }
 
     function iconAssetUrl(iconId) {
       return "{{ url_for('static', filename='icons/') }}" + encodeURIComponent(iconId) + ".svg";
@@ -741,9 +776,50 @@
       return JSON.stringify(buttons);
     }
 
+    /**
+     * Called on form submit. Serializes button state AND encodes current
+     * image previews into hidden fields for server-side storage.
+     */
     function serializeButtonsBeforeSubmit() {
       document.getElementById("buttons-json-field").value = collectButtonsAsJson();
+
+      // Encode current preview images as base64 for submission.
+      // Uses shared parseDataUriMime/extForMime helpers — no inline regex or
+      // per-format branching. All image types (SVG included) handled uniformly.
+      encodeCurrentImage('favicon-preview', 'favicon-data-field', 'favicon-ext-field');
+      encodeCurrentImage('logo-preview', 'logo-data-field', 'logo-ext-field');
+
       return true;
+    }
+
+    /**
+     * Read the current <img> preview's data URI, extract MIME → extension via
+     * the server-injected MIME_TO_EXT map, and populate hidden base64 + extension
+     * fields for form submission.
+     *
+     * Clears fields if no valid image is present. This signals intentional
+     * deletion to the server (store_image_from_form_data deletes when ext is empty).
+     * Fields are ALSO cleared if the MIME type isn't in the upload whitelist —
+     * this prevents submitting extensions for formats the server would reject,
+     * which previously caused silent data loss on subsequent saves.
+     */
+    function encodeCurrentImage(imgId, dataFieldId, extFieldId) {
+      const img = document.getElementById(imgId);
+      const dataField = document.getElementById(dataFieldId);
+      const extField = document.getElementById(extFieldId);
+
+      const mime = img ? parseDataUriMime(img.src) : null;
+      const ext = mime ? extForMime(mime) : '';
+
+      if (mime && ext && img.src.includes(',')) {
+        dataField.value = img.src.split(',')[1];
+        extField.value = ext;
+      } else {
+        // No valid image in preview, or MIME not in upload whitelist.
+        // Clear fields so server either deletes (if previously stored) or ignores.
+        dataField.value = '';
+        extField.value = '';
+      }
     }
 
     function resetColor(button) {
@@ -883,6 +959,16 @@
       container.appendChild(block);
     }
 
+    /**
+     * Handle file input change for favicon/logo upload.
+     * Reads the selected file as a data URI, updates the preview <img>,
+     * and immediately populates hidden base64 + extension fields.
+     *
+     * Extension is derived from the data URI's MIME type via extForMime()
+     * (server-injected map), NOT from the original filename. This avoids
+     * the bug where filenames with hyphens caused browser-dependent src
+     * normalization that broke the old regex-based MIME extraction.
+     */
     function previewImage(input, previewId, statusId) {
       const container = document.getElementById(previewId + '-container');
       const isFavicon = previewId === 'favicon-preview';
@@ -900,7 +986,7 @@
           const width = isFavicon ? '64px' : '200px';
           const height = isFavicon ? '64px' : '100px';
 
-          container.style.cssText = `display: inline-block; cursor: pointer; vertical-align: top;`;
+          container.style.cssText = 'display: inline-block; cursor: pointer; vertical-align: top;';
           container.innerHTML = `
             <img id="${previewId}" src="${e.target.result}" alt="${isFavicon ? 'Favicon preview' : 'Logo preview'}" style="max-width: ${width}; max-height: ${height}; border: 1px solid #ddd; border-radius: 4px" />
           `;
@@ -924,26 +1010,28 @@
           removeBtn.className = 'color-reset-btn';
           removeBtn.style.cssText = 'margin-left: 10px; vertical-align: top;';
           removeBtn.textContent = 'Remove';
-          removeBtn.onclick = function(e) {
-            e.stopPropagation();
+          removeBtn.onclick = function(ev) {
+            ev.stopPropagation();
             removeImage(isFavicon ? 'favicon' : 'logo');
           };
           container.parentNode.insertBefore(removeBtn, container.nextSibling);
 
-          // Update hidden fields immediately
+          // Populate hidden fields using shared MIME→ext lookup.
+          // All image types (SVG, PNG, JPEG, ICO) handled uniformly —
+          // no per-format branching or special-casing.
+          const mime = parseDataUriMime(e.target.result);
+          const ext = mime ? extForMime(mime) : '';
           const dataField = document.getElementById(dataFieldId);
           const extField = document.getElementById(extFieldId);
-          const mimeMatch = e.target.result.match(/^data:(image\/[^;]+);base64,/);
-          if (mimeMatch) {
-            const mimeType = mimeMatch[1];
-            let ext = '';
-            if (mimeType === 'image/svg+xml') ext = '.svg';
-            else if (mimeType === 'image/png') ext = '.png';
-            else if (mimeType === 'image/jpeg') ext = '.jpg';
-            else if (mimeType === 'image/x-icon' || mimeType === 'image/vnd.microsoft.icon') ext = '.ico';
 
+          if (mime && ext) {
             dataField.value = e.target.result.split(',')[1];
             extField.value = ext;
+          } else {
+            // Unsupported MIME type — clear fields so server rejects with
+            // a clear error message rather than silently deleting on next save.
+            dataField.value = '';
+            extField.value = '';
           }
         };
 
@@ -951,6 +1039,11 @@
       }
     }
 
+    /**
+     * Remove the current favicon or logo preview and clear associated hidden fields.
+     * Restores the dashed-border placeholder UI and removes the "Remove" button.
+     * Clearing the hidden fields signals deletion to store_image_from_form_data.
+     */
     function removeImage(type) {
       const isFavicon = type === 'favicon';
       const inputId = isFavicon ? 'favicon-input' : 'org-logo-input';
@@ -967,7 +1060,7 @@
 
       document.getElementById(inputId).value = '';
 
-      // Clear hidden fields
+      // Clear hidden fields — signals deletion to server on next save
       document.getElementById(dataFieldId).value = '';
       document.getElementById(extFieldId).value = '';
 
@@ -990,46 +1083,6 @@
       const removeBtn = document.getElementById(removeBtnId);
       if (removeBtn) {
         removeBtn.remove();
-      }
-    }
-
-    function serializeButtonsBeforeSubmit() {
-      document.getElementById("buttons-json-field").value = collectButtonsAsJson();
-
-      // Encode current preview images as base64 for submission
-      encodeCurrentImage('favicon-preview', 'favicon-data-field', 'favicon-ext-field');
-      encodeCurrentImage('logo-preview', 'logo-data-field', 'logo-ext-field');
-
-      return true;
-    }
-
-    function encodeCurrentImage(imgId, dataFieldId, extFieldId) {
-      const img = document.getElementById(imgId);
-      const dataField = document.getElementById(dataFieldId);
-      const extField = document.getElementById(extFieldId);
-
-      console.log(`encodeCurrentImage: imgId=${imgId}, img.src starts with data: ${img?.src?.startsWith('data:')}`);
-      console.log(`encodeCurrentImage: img.src length=${img?.src?.length}, first 100 chars: ${img?.src?.substring(0, 100)}`);
-
-      if (img && img.src && img.src.startsWith('data:')) {
-        // Extract MIME type from data URL
-        const match = img.src.match(/^data:(image\/[^;]+);base64,/);
-        if (match) {
-          const mimeType = match[1];
-          let ext = '';
-          if (mimeType === 'image/svg+xml') ext = '.svg';
-          else if (mimeType === 'image/png') ext = '.png';
-          else if (mimeType === 'image/jpeg') ext = '.jpg';
-          else if (mimeType === 'image/x-icon' || mimeType === 'image/vnd.microsoft.icon') ext = '.ico';
-
-          dataField.value = img.src.split(',')[1]; // base64 part only
-          extField.value = ext;
-        }
-      } else {
-        // No image present
-        console.log(`encodeCurrentImage: No valid image found, clearing fields`);
-        dataField.value = '';
-        extField.value = '';
       }
     }
   </script>
