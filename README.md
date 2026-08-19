@@ -99,6 +99,7 @@ No need to initialize environment for Docker deployment.
 
 ```sh
 # customize deployment/docker-compose.yaml
+# prepare the static site dir with proper permissions
 docker compose -f deployment/docker-compose.yaml
 ```
 
@@ -118,3 +119,9 @@ wiped in between.
 ```sh
 docker compose -f deployment/docker-compose.yaml -p linkbuilder up --build; docker compose -f deployment/docker-compose.yaml -p linkbuilder down -v
 ```
+
+## Licenses
+
+This project is licensed under the MIT License, except for the following:
+
+- icons: The icons pulled into the generated docker image is from Iconify's SVG Logos icon set by Gil Barbara, licensed under the CC0 1.0 Universal License.
