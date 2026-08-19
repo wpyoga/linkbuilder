@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import os
 import io
+from pathlib import Path
 import json
 import math
 import urllib.request
@@ -167,6 +168,22 @@ def process_icon(icon_name, icon_data, source_catalog):
 
 def sync_and_compile_icons():
     """Download, filter, sanitize, and store the icon catalog."""
+    icon_files = list(Path(ICON_DIR).glob("*.svg", case_sensitive=False))
+    if icon_files:
+        # Icons exist on disk: rebuild catalog from filesystem
+        print(f"Found {len(icon_files)} icons on disk, rebuilding catalog...")
+        found_icon_ids = sorted(
+            os.path.splitext(os.path.basename(f))[0] for f in icon_files
+        )
+        with get_db() as db:
+            db.execute("DELETE FROM site_config WHERE key = 'icon_catalog_json'")
+            db.execute(
+                "INSERT INTO site_config (key, value) VALUES ('icon_catalog_json', ?)",
+                (json.dumps(found_icon_ids),),
+            )
+
+        return
+
     print("Downloading source catalog...")
     req = urllib.request.Request(
         ICON_SRC_URL, headers={"User-Agent": "Linkbuilder/1.0"}
